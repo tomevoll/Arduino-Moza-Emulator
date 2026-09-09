@@ -11,7 +11,10 @@
 
 namespace moza {
 
-constexpr uint8_t INFO_ADDRESS = 0x17; // Auxiliary management & query address
+// Physical I2C slave addresses on wheel bus
+constexpr uint8_t SLAVE_ADDRESS   = 0x09; // Input state & wheel identification
+constexpr uint8_t LED_ADDRESS     = 0x08; // Shift lights & LED controls
+constexpr uint8_t DISPLAY_ADDRESS = 0x20; // Display screen telemetry
 
 enum class WheelModel {
     ES = 0x04,   // Standard MOZA ES Wheel
@@ -44,7 +47,7 @@ public:
     WheelModel getWheelModel() const;
     uint8_t getFcPayload() const;
 
-    // Device Metadata / Address 0x17 Info string responses
+    // Device Metadata strings
     void setDeviceName(const std::string& name);
     std::string getDeviceName() const;
 
@@ -54,7 +57,7 @@ public:
     void setSerialNumber(const std::string& sn);
     std::string getSerialNumber() const;
 
-    // Get formatted ASCII info response buffer for address 0x17 queries
+    // Formatted ASCII info response helper
     std::vector<uint8_t> getInfoResponse(uint8_t queryType = 0x00) const;
 
     // Button state modification
@@ -75,7 +78,7 @@ public:
     void setButtonPayload(size_t index, uint8_t value);
     void setPaddlePayload(size_t index, uint8_t value);
 
-    // Telemetry / LED data from wheelbase (Addresses 0x08 & 0x20)
+    // Telemetry / LED data from wheelbase (Physical Addresses 0x08 & 0x20)
     void updateLedData(const uint8_t* data, size_t length);
     void updateDisplayTelemetry(const uint8_t* data, size_t length);
 
