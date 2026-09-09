@@ -3,7 +3,7 @@
 ## Table of Contents
 - [Overview](#overview)
 - [Code Structure](#code-structure)
-  - [Arduino Implementation (`code/`)](#arduino-implementation-code)
+  - [Arduino IDE Implementation (`MozaWheel/`)](#arduino-ide-implementation-mozawheel)
   - [Raspberry Pi 4 C++ Implementation (`code_rpi/`)](#raspberry-pi-4-c-implementation-code_rpi)
 - [I2C Communication Details](#i2c-communication-details)
   - [Initialization & Setup](#initialization--setup)
@@ -35,19 +35,17 @@
   - **Paddles:** Use predefined payloads to indicate paddle states.
   
 - **Development Environment:**  
-  - **Arduino / AVR:** Developed using PlatformIO on VSCode (Arduino Micro / UNO).
+  - **Arduino IDE / Micro / UNO:** Located in `MozaWheel/MozaWheel.ino` (can be opened directly in Arduino IDE).
   - **Raspberry Pi 4 Model B:** C++ implementation using `pigpio` Broadcom Serial Controller (BSC) I2C Slave interface (`code_rpi/`).
 
 ## Code Structure
 
-### Arduino Implementation (`code/`)
+### Arduino IDE Implementation (`MozaWheel/`)
 
-- **I2C Communication:**
-  - **`i2c_handler.cpp`:**  
-    Implements the I2C event handlers (`requestEvent` and `receiveEvent`).
-
-- **Input Handlers:**
-  - **`button_handler.cpp`**, **`encoder_handler.cpp`**, **`paddle_handler.cpp`**, **`keypad_handler.cpp`**.
+Located in `MozaWheel/`, structured for direct opening in the **Arduino IDE**:
+- **`MozaWheel.ino`:** Main sketch file (`setup()` and `loop()`).
+- **`i2c_handler.h / .cpp`:** Implements I2C slave event handlers (`requestEvent` and `receiveEvent`).
+- **Input Handlers:** `button_handler.cpp`, `encoder_handler.cpp`, `paddle_handler.cpp`, `keypad_handler.cpp`.
 
 ### Raspberry Pi 4 C++ Implementation (`code_rpi/`)
 
@@ -75,13 +73,13 @@ sudo ./moza_rpi_slave
 ### Initialization & Setup
 
 - **Slave Address:**  
-  The slave address is defined as `0x09` in `i2c_handler.cpp`. This is the known address that is requested by the wheel base at all times:
+  The slave address is defined as `0x09` in `i2c_handler.h`. This is the known address that is requested by the wheel base at all times:
   ```cpp
   #define SLAVE_ADDRESS 0x09
   ```
 
 - **Slave Setup:**  
-  In `main.cpp`, the Arduino is configured as an I2C slave:
+  In `MozaWheel.ino`, the Arduino is configured as an I2C slave:
   ```cpp
   Wire.begin(SLAVE_ADDRESS);
   Wire.setClock(400000);
