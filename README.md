@@ -3,6 +3,8 @@
 ## Table of Contents
 - [Overview](#overview)
 - [Code Structure](#code-structure)
+  - [Arduino Implementation (`code/`)](#arduino-implementation-code)
+  - [Raspberry Pi 4 C++ Implementation (`code_rpi/`)](#raspberry-pi-4-c-implementation-code_rpi)
 - [I2C Communication Details](#i2c-communication-details)
   - [Initialization & Setup](#initialization--setup)
   - [Communication States and Payloads](#communication-states-and-payloads)
@@ -19,7 +21,7 @@
 ## Overview
 
 - **Context:**  
-  This work targets the **MOZA ES Wheel**, which is recognized by various MOZA Racing Wheel Bases through a specific I2C payload. We will discuss the various payloads and what they mean based on context that is known. A lot of what is done here is based on assumptions that were done during testing. These details are not known to be completely accurate as the testing was only done on a single wheelbase and only the ES wheel. The solution is also used in a very custom context as a personal project so although the findings here are useful to anyone, the specific application would need to be modified. 
+  This work targets the **MOZA ES / GS Wheels**, which are recognized by various MOZA Racing Wheel Bases through specific I2C payloads. We will discuss the various payloads and what they mean based on context that is known. A lot of what is done here is based on assumptions that were done during testing. These details are not known to be completely accurate as the testing was only done on a single wheelbase and only the ES wheel. The solution is also used in a very custom context as a personal project so although the findings here are useful to anyone, the specific application would need to be modified.
   
 - **Firmware Versions:**  
   The protocol is known to work on firmware versions:
@@ -33,40 +35,40 @@
   - **Paddles:** Use predefined payloads to indicate paddle states.
   
 - **Development Environment:**  
-  Developed using PlatformIO on VSCode. Arduino UNO for prototyping. Full implementation on Arduino Micro.
+  - **Arduino / AVR:** Developed using PlatformIO on VSCode (Arduino Micro / UNO).
+  - **Raspberry Pi 4 Model B:** C++ implementation using `pigpio` Broadcom Serial Controller (BSC) I2C Slave interface (`code_rpi/`).
 
 ## Code Structure
 
+### Arduino Implementation (`code/`)
+
 - **I2C Communication:**
   - **`i2c_handler.cpp`:**  
-    Implements the I2C event handlers:
-    - **Request Event:** Sends a payload (e.g., FC_PAYLOAD) based on the current system state.
-    - **Receive Event:** Processes command bytes from the master (e.g., `0xFC`, `0xF9`, `0xDD`, `0xDE`) to set the active state and payload index.
+    Implements the I2C event handlers (`requestEvent` and `receiveEvent`).
 
 - **Input Handlers:**
-  - **`button_handler.cpp`:**  
-    Handles regular button inputs. Buttons are mapped (see [Button Mapping Table](#button-mapping-table)) to specific payload indices and values.
-  - **`encoder_handler.cpp`:**  
-    Processes rotary encoder events. Each encoder uses two keys to determine rotation and updates its payload accordingly.
-  - **`paddle_handler.cpp`:**  
-    Manages paddle inputs using predefined payloads for left and right paddles.
-  - **`keypad_handler.cpp`:**  
-    Uses the Keypad library to poll a matrix of buttons and dispatch events to the proper handlers.
+  - **`button_handler.cpp`**, **`encoder_handler.cpp`**, **`paddle_handler.cpp`**, **`keypad_handler.cpp`**.
 
-- **Peripheral Classes:**  
-  - **`encoder.cpp`** and **`paddle.cpp`:**  
-    Provide low-level functionality for managing the state changes of rotary encoders and paddles.
+### Raspberry Pi 4 C++ Implementation (`code_rpi/`)
 
-- **Configuration Files:**
-  - **`button_mapping.h`:**  
-    Defines mappings of keys to payload indices and values.
-  - **`keypad_config.h`:**  
-    Sets up the keypad matrix (rows, columns, pins, and key layout).
+A standalone C++ implementation located in `code_rpi/` designed to run directly on a **Raspberry Pi 4 Model B**.
 
-- **`main.cpp`:**  
-  - Initializes I2C communication using a defined slave address (`SLAVE_ADDRESS`).
-  - Registers I2C event handlers (`requestEvent` and `receiveEvent`).
-  - Initializes the keypad and continuously processes keypad events.
+- **Hardware Pinout:**
+  - **GPIO 10 = SDA → Physical Pin 19**
+  - **GPIO 11 = SCL → Physical Pin 23**
+  - **GND → Physical Pin 20** (or any Pi ground)
+
+- **Key Components:**
+  - **`moza_wheel_state.hpp / .cpp`:** Thread-safe state container supporting configurable wheel identification (`MOZA_GS` = `0x08`, `MOZA_ES` = `0x04`, `MOZA_FSR` = `0x0C`), programmatic button & paddle setters (`setButton`, `setLeftPaddle`, `setRightPaddle`), and display/LED telemetry callbacks.
+  - **`i2c_handler.hpp / .cpp`:** Configures pigpio BSC hardware slave mode on GPIO 10 & 11 (address `0x09`) and processes read/write sequences from the wheelbase.
+  - **`main.cpp` & `Makefile`:** Build and startup entry point.
+
+To compile and run on Raspberry Pi:
+```bash
+cd code_rpi
+make
+sudo ./moza_rpi_slave
+```
 
 ## I2C Communication Details
 
@@ -90,7 +92,7 @@
 - **Event Handlers:**
   - **`requestEvent()`:**  
     Sends a payload based on the active state:
-    - **FC_RECEIVED:** Returns `FC_PAYLOAD` to indicate a wheel is connected.
+    - **FC_RECEIVED:** Returns `FC_PAYLOAD` to indicate a wheel is connected. (`0x04` for ES Wheel, `0x08` for GS Wheel, `0x0C` for FSR Wheel).
     - **F9_RECEIVED:** Returns `F9_PAYLOAD`.
     - **DD_RECEIVED:** Returns a combination of button and rotary encoder payloads.
     - **DE_RECEIVED:** Returns the paddle payload.
@@ -101,14 +103,17 @@
 
 | **Command Byte** | **Description**                                                  |
 |------------------|------------------------------------------------------------------|
-| 0xFC             | Device identification: Indicates the connected MOZA ES Wheel.    |
+| 0xFC             | Device identification: Indicates the connected MOZA Wheel.       |
 | 0xF9             | Not sure but not sending this byte after FC causes missing inputs|
 | 0xDD             | All buttons payloads. 5 responses in a sequence                  |
 | 0xDE             | Paddle payload. Different from regular button input              |
 
 ### Device Identification
 
-The `0xFC` command is used to identify the connected device. When the MOZA ES Wheel is detected, the wheel base sends an `FC_PAYLOAD` to confirm the connection. This payload is used to set the `FC_RECEIVED` state and indicate that the wheel is connected.
+The `0xFC` command is used to identify the connected device. When the MOZA Wheel is detected, the wheel base requests an `FC_PAYLOAD` to confirm the connection:
+- `0x04`: MOZA ES Wheel
+- `0x08`: MOZA GS Wheel
+- `0x0C`: MOZA FSR Wheel
 
 ## Input Handling
 
@@ -168,13 +173,9 @@ The rotary encoders are handled using regular button inputs using some encoding 
 
 NOTE: Known issue is spinning the encoder too fast causes the encoder to add two inputs at the same time. Although during an actual race this has not been an issue.
 
-### Led Handling
+### Led Handling & Display Telemetry
 
-LED's are handled with the `0x08` address. There is a single response that handles brightness and the rest of the responses determine whether the LED is on or off. There is not LED handling done here but I was able to successfully replicate the master and write to the wheels LEDs through some testing. 
-
-### Unkown Address
-
-One address that is unaccounted for on the ES wheel is the `0x20` address. Although this is only an assumption, the only feature that the ES wheel doesnt have that other wheels that are compatible do have is the display found . 
+LEDs and shift lights are sent on address **`0x08`**. Displays / telemetry packets are sent on address **`0x20`**.
 
 ## Reverse Engineering Process
 
