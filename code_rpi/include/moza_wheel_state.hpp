@@ -11,8 +11,7 @@
 
 namespace moza {
 
-// Physical I2C slave addresses on wheel bus
-constexpr uint8_t SLAVE_ADDRESS   = 0x09; // Input state & wheel identification
+constexpr uint8_t SLAVE_ADDRESS   = 0x09; // Primary I2C slave address on wheel bus
 constexpr uint8_t LED_ADDRESS     = 0x08; // Shift lights & LED controls
 constexpr uint8_t DISPLAY_ADDRESS = 0x20; // Display screen telemetry
 
@@ -38,6 +37,7 @@ using TelemetryCallback = std::function<void(uint8_t address, const std::vector<
 class MozaWheelState {
 public:
     static constexpr size_t PAYLOAD_SIZE = 5;
+    static constexpr size_t F3_PAYLOAD_SIZE = 60; // 60-byte metadata buffer for 0xF3 query
     static constexpr size_t TELEMETRY_BUFFER_SIZE = 256;
 
     explicit MozaWheelState(WheelModel model = WheelModel::GS);
@@ -56,6 +56,9 @@ public:
 
     void setSerialNumber(const std::string& sn);
     std::string getSerialNumber() const;
+
+    // Get 60-byte metadata payload response for command 0xF3
+    std::array<uint8_t, F3_PAYLOAD_SIZE> getF3MetadataPayload() const;
 
     // Formatted ASCII info response helper
     std::vector<uint8_t> getInfoResponse(uint8_t queryType = 0x00) const;

@@ -1,5 +1,6 @@
 #include "moza_wheel_state.hpp"
 #include <algorithm>
+#include <cstring>
 
 namespace moza {
 
@@ -93,6 +94,36 @@ void MozaWheelState::setSerialNumber(const std::string& sn) {
 std::string MozaWheelState::getSerialNumber() const {
     std::lock_guard<std::mutex> lock(stateMutex_);
     return serialNumber_;
+}
+
+std::array<uint8_t, MozaWheelState::F3_PAYLOAD_SIZE> MozaWheelState::getF3MetadataPayload() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    std::array<uint8_t, F3_PAYLOAD_SIZE> buffer{};
+    buffer.fill(0x00);
+
+    // Format: Device Name null-padded, followed by FW version and SN
+    size_t offset = 0;
+
+    // Copy Device Name
+    size_t nameLen = std::min(deviceName_.length(), static_cast<size_t>(20));
+    std::memcpy(&buffer[offset], deviceName_.c_str(), nameLen);
+    offset += 20;
+
+    // Copy Firmware Version
+    size_t fwLen = std::min(firmwareVersion_.length(), static_cast<size_t>(16));
+    std::memcpy(&buffer[offset], firmwareVersion_.c_str(), fwLen);
+    offset += 16;
+
+    // Copy Serial Number
+    size_t snLen = std::min(serialNumber_.length(), static_cast<size_t>(16));
+    std::memcpy(&buffer[offset], serialNumber_.c_str(), snLen);
+    offset += 16;
+
+    // Set trailing status bytes
+    buffer[58] = 0x25;
+    buffer[59] = 0x12;
+
+    return buffer;
 }
 
 std::vector<uint8_t> MozaWheelState::getInfoResponse(uint8_t queryType) const {

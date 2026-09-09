@@ -23,22 +23,24 @@ void testWheelModelIdentification() {
     std::cout << "[PASS] Wheel model identification test" << std::endl;
 }
 
-void testAddress0x17InfoResponses() {
+void testCommandF3MetadataResponse() {
     moza::MozaWheelState wheel(moza::WheelModel::GS);
+    wheel.setDeviceName("MOZA GS Wheel");
+    wheel.setFirmwareVersion("v1.2.0.8");
+    wheel.setSerialNumber("GS2023080001");
 
-    auto nameResp = wheel.getInfoResponse(0x00);
-    std::string nameStr(nameResp.begin(), nameResp.end());
+    auto payload = wheel.getF3MetadataPayload();
+    assert(payload.size() == 60);
+
+    // Check device name prefix
+    std::string nameStr(reinterpret_cast<char*>(payload.data()), 13);
     assert(nameStr == "MOZA GS Wheel");
 
-    auto fwResp = wheel.getInfoResponse(0x01);
-    std::string fwStr(fwResp.begin(), fwResp.end());
-    assert(fwStr == "v1.2.0.8");
+    // Check trailer bytes
+    assert(payload[58] == 0x25);
+    assert(payload[59] == 0x12);
 
-    auto snResp = wheel.getInfoResponse(0x02);
-    std::string snStr(snResp.begin(), snResp.end());
-    assert(snStr == "GS2023080001");
-
-    std::cout << "[PASS] Address 0x17 info response test" << std::endl;
+    std::cout << "[PASS] Command 0xF3 metadata response test" << std::endl;
 }
 
 void testDefaultState() {
@@ -130,7 +132,7 @@ void testTelemetryAndLedData() {
 int main() {
     std::cout << "Running MozaWheelState unit tests..." << std::endl;
     testWheelModelIdentification();
-    testAddress0x17InfoResponses();
+    testCommandF3MetadataResponse();
     testDefaultState();
     testButtonSetting();
     testPaddleSetting();

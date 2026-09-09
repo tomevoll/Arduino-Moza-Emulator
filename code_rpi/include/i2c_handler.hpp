@@ -18,6 +18,7 @@ enum class SlaveState {
     NONE,
     FC_RECEIVED,
     F9_RECEIVED,
+    F3_RECEIVED,  // 60-byte metadata payload query
     DD_RECEIVED,
     DE_RECEIVED
 };

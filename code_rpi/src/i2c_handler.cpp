@@ -62,6 +62,7 @@ SlaveState I2CHandler::getNextState(uint8_t received) {
     switch (received) {
         case 0xFC: return SlaveState::FC_RECEIVED;
         case 0xF9: return SlaveState::F9_RECEIVED;
+        case 0xF3: return SlaveState::F3_RECEIVED;
         case 0xDD: return SlaveState::DD_RECEIVED;
         case 0xDE: return SlaveState::DE_RECEIVED;
         default:   return SlaveState::NONE;
@@ -78,6 +79,13 @@ void I2CHandler::updateTxBufferForState(SlaveState state) {
             xfer_.txBuf[0] = static_cast<char>(F9_PAYLOAD);
             xfer_.txCnt = 1;
             break;
+        case SlaveState::F3_RECEIVED: {
+            // Load 60-byte metadata payload (Device name, FW, SN)
+            auto metaPayload = wheelState_.getF3MetadataPayload();
+            std::memcpy(xfer_.txBuf, metaPayload.data(), metaPayload.size());
+            xfer_.txCnt = metaPayload.size();
+            break;
+        }
         case SlaveState::DD_RECEIVED:
             // Load all 5 button sequence payload bytes into TX FIFO buffer
             for (size_t i = 0; i < 5; ++i) {
