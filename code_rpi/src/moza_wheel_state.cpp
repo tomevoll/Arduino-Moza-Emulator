@@ -31,8 +31,24 @@ static constexpr ButtonConfig BUTTON_MAP[] = {
 static constexpr uint8_t LEFT_PADDLE_PATTERN[5]  = {0xC2, 0xC2, 0xC0, 0xC0, 0xC2};
 static constexpr uint8_t RIGHT_PADDLE_PATTERN[5] = {0xC4, 0xC4, 0xC0, 0xC0, 0xC4};
 
-MozaWheelState::MozaWheelState() {
+MozaWheelState::MozaWheelState(WheelModel model)
+    : model_(model) {
     reset();
+}
+
+void MozaWheelState::setWheelModel(WheelModel model) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    model_ = model;
+}
+
+WheelModel MozaWheelState::getWheelModel() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return model_;
+}
+
+uint8_t MozaWheelState::getFcPayload() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return static_cast<uint8_t>(model_);
 }
 
 void MozaWheelState::reset() {
@@ -42,6 +58,8 @@ void MozaWheelState::reset() {
     buttonStates_ = 0;
     leftPaddlePressed_ = false;
     rightPaddlePressed_ = false;
+    ledBuffer_.clear();
+    displayBuffer_.clear();
 }
 
 bool MozaWheelState::setButton(uint8_t buttonNum, bool pressed) {
@@ -112,14 +130,13 @@ bool MozaWheelState::getPaddle(PaddleId paddle) const {
 }
 
 void MozaWheelState::updatePaddlePayloads() {
-    // Note: Called with mutex already locked
     for (size_t i = 0; i < PAYLOAD_SIZE; ++i) {
         uint8_t val = 0x00;
         if (leftPaddlePressed_) {
-            val += LEFT_PADDLE_PATTERN[i];
+            val |= LEFT_PADDLE_PATTERN[i];
         }
         if (rightPaddlePressed_) {
-            val += RIGHT_PADDLE_PATTERN[i];
+            val |= RIGHT_PADDLE_PATTERN[i];
         }
         paddlePayloads_[i] = val;
     }
@@ -153,6 +170,45 @@ void MozaWheelState::setPaddlePayload(size_t index, uint8_t value) {
     if (index < PAYLOAD_SIZE) {
         paddlePayloads_[index] = value;
     }
+}
+
+void MozaWheelState::updateLedData(const uint8_t* data, size_t length) {
+    TelemetryCallback cb = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        ledBuffer_.assign(data, data + length);
+        cb = telemetryCallback_;
+    }
+    if (cb) {
+        cb(0x08, std::vector<uint8_t>(data, data + length));
+    }
+}
+
+void MozaWheelState::updateDisplayTelemetry(const uint8_t* data, size_t length) {
+    TelemetryCallback cb = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        displayBuffer_.assign(data, data + length);
+        cb = telemetryCallback_;
+    }
+    if (cb) {
+        cb(0x20, std::vector<uint8_t>(data, data + length));
+    }
+}
+
+std::vector<uint8_t> MozaWheelState::getLedData() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return ledBuffer_;
+}
+
+std::vector<uint8_t> MozaWheelState::getDisplayTelemetry() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return displayBuffer_;
+}
+
+void MozaWheelState::setTelemetryCallback(TelemetryCallback cb) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    telemetryCallback_ = cb;
 }
 
 } // namespace moza

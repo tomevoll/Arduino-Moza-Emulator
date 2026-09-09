@@ -21,9 +21,15 @@ bool I2CHandler::initialize() {
     // GPIO 10 = SDA, GPIO 11 = SCL (Pin 19 and Pin 23 on Pi 4)
     // Control word:
     // Bits 31-16: I2C slave address (0x09)
-    // Bit 2: Enable I2C mode
-    // Bit 0: Enable BSC peripheral
-    xfer_.control = (slaveAddress_ << 16) | 0x05;
+    // Bit 3: Enable TX FIFO (0x08)
+    // Bit 2: Enable RX FIFO (0x04)
+    // Bit 0: Enable BSC peripheral (0x01)
+    // Total control mask: 0x0D (0b00001101)
+    xfer_.control = (slaveAddress_ << 16) | 0x0D;
+
+    // Pre-stage default FC response in TX FIFO
+    xfer_.txBuf[0] = static_cast<char>(wheelState_.getFcPayload());
+    xfer_.txCnt = 1;
 
     int status = bscXfer(&xfer_);
     if (status < 0) {
@@ -58,48 +64,45 @@ SlaveState I2CHandler::getNextState(uint8_t received) {
     }
 }
 
+void I2CHandler::updateTxBufferForState(SlaveState state) {
+    switch (state) {
+        case SlaveState::FC_RECEIVED:
+            xfer_.txBuf[0] = static_cast<char>(wheelState_.getFcPayload());
+            xfer_.txCnt = 1;
+            break;
+        case SlaveState::F9_RECEIVED:
+            xfer_.txBuf[0] = static_cast<char>(F9_PAYLOAD);
+            xfer_.txCnt = 1;
+            break;
+        case SlaveState::DD_RECEIVED:
+            // Load all 5 button sequence payload bytes into TX FIFO buffer
+            for (size_t i = 0; i < 5; ++i) {
+                xfer_.txBuf[i] = static_cast<char>(wheelState_.getButtonPayload(i));
+            }
+            xfer_.txCnt = 5;
+            break;
+        case SlaveState::DE_RECEIVED:
+            // Load all 5 paddle sequence payload bytes into TX FIFO buffer
+            for (size_t i = 0; i < 5; ++i) {
+                xfer_.txBuf[i] = static_cast<char>(wheelState_.getPaddlePayload(i));
+            }
+            xfer_.txCnt = 5;
+            break;
+        case SlaveState::NONE:
+        default:
+            xfer_.txCnt = 0;
+            break;
+    }
+}
+
 void I2CHandler::processReceivedByte(uint8_t byte) {
     SlaveState next = getNextState(byte);
     if (next != SlaveState::NONE) {
         currentState_ = next;
-        if (next == SlaveState::DD_RECEIVED || next == SlaveState::DE_RECEIVED) {
-            btnSeqIdx_++;
-            if (btnSeqIdx_ >= 5) {
-                btnSeqIdx_ = 0;
-            }
-        } else if (next == SlaveState::FC_RECEIVED) {
-            btnSeqIdx_ = -1;
-        }
+        updateTxBufferForState(next);
     } else {
         currentState_ = SlaveState::NONE;
     }
-}
-
-uint8_t I2CHandler::prepareResponse() {
-    uint8_t response = 0x00;
-    size_t idx = (btnSeqIdx_ >= 0 && btnSeqIdx_ < 5) ? static_cast<size_t>(btnSeqIdx_) : 0;
-
-    switch (currentState_) {
-        case SlaveState::FC_RECEIVED:
-            response = FC_PAYLOAD;
-            break;
-        case SlaveState::F9_RECEIVED:
-            response = F9_PAYLOAD;
-            break;
-        case SlaveState::DD_RECEIVED:
-            response = wheelState_.getButtonPayload(idx);
-            break;
-        case SlaveState::DE_RECEIVED:
-            response = wheelState_.getPaddlePayload(idx);
-            break;
-        case SlaveState::NONE:
-        default:
-            response = 0x00;
-            break;
-    }
-
-    currentState_ = SlaveState::NONE;
-    return response;
 }
 
 void I2CHandler::process() {
@@ -111,18 +114,13 @@ void I2CHandler::process() {
         return;
     }
 
-    // Process received bytes from I2C Master (Wheelbase)
+    // Process received bytes from I2C Master (Wheelbase) on I2C slave address (0x09)
     if (xfer_.rxCnt > 0) {
         for (int i = 0; i < xfer_.rxCnt; ++i) {
             processReceivedByte(reinterpret_cast<uint8_t*>(xfer_.rxBuf)[i]);
         }
 
-        // Prepare response byte for master read
-        uint8_t respByte = prepareResponse();
-        xfer_.txBuf[0] = static_cast<char>(respByte);
-        xfer_.txCnt = 1;
-
-        // Update BSC FIFO transmit buffer
+        // Update BSC FIFO transmit buffer with full prepared payload
         bscXfer(&xfer_);
     }
 }

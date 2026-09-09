@@ -9,8 +9,9 @@
 namespace moza {
 
 constexpr uint8_t SLAVE_ADDRESS = 0x09;
+constexpr uint8_t LED_ADDRESS   = 0x08;
+constexpr uint8_t DISPLAY_ADDRESS = 0x20;
 
-constexpr uint8_t FC_PAYLOAD = 0x04;  // response for DW: FC -> DR: 04
 constexpr uint8_t F9_PAYLOAD = 0x02;  // response for DW: F9 -> DR: 02
 
 enum class SlaveState {
@@ -44,12 +45,11 @@ private:
     std::atomic<bool> running_{false};
 
     SlaveState currentState_{SlaveState::NONE};
-    int8_t btnSeqIdx_{-1};
 
     bsc_xfer_t xfer_{};
 
     SlaveState getNextState(uint8_t received);
-    uint8_t prepareResponse();
+    void updateTxBufferForState(SlaveState state);
     void processReceivedByte(uint8_t byte);
 };
 
