@@ -6,9 +6,12 @@
 #include <mutex>
 #include <array>
 #include <vector>
+#include <string>
 #include <functional>
 
 namespace moza {
+
+constexpr uint8_t INFO_ADDRESS = 0x17; // Auxiliary management & query address
 
 enum class WheelModel {
     ES = 0x04,   // Standard MOZA ES Wheel
@@ -40,6 +43,19 @@ public:
     void setWheelModel(WheelModel model);
     WheelModel getWheelModel() const;
     uint8_t getFcPayload() const;
+
+    // Device Metadata / Address 0x17 Info string responses
+    void setDeviceName(const std::string& name);
+    std::string getDeviceName() const;
+
+    void setFirmwareVersion(const std::string& version);
+    std::string getFirmwareVersion() const;
+
+    void setSerialNumber(const std::string& sn);
+    std::string getSerialNumber() const;
+
+    // Get formatted ASCII info response buffer for address 0x17 queries
+    std::vector<uint8_t> getInfoResponse(uint8_t queryType = 0x00) const;
 
     // Button state modification
     bool setButton(uint8_t buttonNum, bool pressed);
@@ -75,6 +91,10 @@ private:
     mutable std::mutex stateMutex_;
 
     WheelModel model_{WheelModel::GS};
+
+    std::string deviceName_{"MOZA GS Wheel"};
+    std::string firmwareVersion_{"v1.2.0.8"};
+    std::string serialNumber_{"GS2023080001"};
 
     std::array<uint8_t, PAYLOAD_SIZE> btnPayloads_{};
     std::array<uint8_t, PAYLOAD_SIZE> paddlePayloads_{};

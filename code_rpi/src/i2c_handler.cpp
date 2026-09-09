@@ -21,17 +21,20 @@ bool I2CHandler::initialize() {
     // GPIO 10 = SDA, GPIO 11 = SCL (Pin 19 and Pin 23 on Pi 4)
     // Control word:
     // Bits 31-16: I2C slave address (0x09)
-    // Bit 3: Enable TX FIFO (0x08)
-    // Bit 2: Enable RX FIFO (0x04)
-    // Bit 0: Enable BSC peripheral (0x01)
-    // Total control mask: 0x0D (0b00001101)
-    xfer_.control = (slaveAddress_ << 16) | 0x0D;
+    // Bit 9: Enable TX FIFO (0x0200)
+    // Bit 8: Enable RX FIFO (0x0100)
+    // Bit 2: Enable I2C mode (0x0004)
+    // Bit 0: Enable BSC peripheral (0x0001)
+    // Control mask: 0x0305
+    xfer_.control = (slaveAddress_ << 16) | 0x0305;
 
     // Pre-stage default FC response in TX FIFO
     xfer_.txBuf[0] = static_cast<char>(wheelState_.getFcPayload());
     xfer_.txCnt = 1;
 
     int status = bscXfer(&xfer_);
+    xfer_.txCnt = 0; // Reset txCnt so subsequent polling does not duplicate FIFO entries
+
     if (status < 0) {
         std::cerr << "Failed to initialize BSC I2C Slave. Error code: " << status << std::endl;
         gpioTerminate();
@@ -47,6 +50,7 @@ bool I2CHandler::initialize() {
 void I2CHandler::stop() {
     if (running_) {
         xfer_.control = 0; // Disable BSC peripheral
+        xfer_.txCnt = 0;
         bscXfer(&xfer_);
         gpioTerminate();
         running_ = false;
@@ -108,7 +112,7 @@ void I2CHandler::processReceivedByte(uint8_t byte) {
 void I2CHandler::process() {
     if (!running_) return;
 
-    // Check BSC status & transfer FIFO
+    // Check BSC status & transfer FIFO (txCnt is 0 during normal polling)
     int status = bscXfer(&xfer_);
     if (status < 0) {
         return;
@@ -120,8 +124,11 @@ void I2CHandler::process() {
             processReceivedByte(reinterpret_cast<uint8_t*>(xfer_.rxBuf)[i]);
         }
 
-        // Update BSC FIFO transmit buffer with full prepared payload
-        bscXfer(&xfer_);
+        // Push newly staged bytes to hardware TX FIFO
+        if (xfer_.txCnt > 0) {
+            bscXfer(&xfer_);
+            xfer_.txCnt = 0; // Reset txCnt to prevent re-pushing duplicate bytes on next loop
+        }
     }
 }
 

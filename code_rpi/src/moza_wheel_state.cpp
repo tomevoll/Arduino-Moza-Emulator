@@ -33,12 +33,26 @@ static constexpr uint8_t RIGHT_PADDLE_PATTERN[5] = {0xC4, 0xC4, 0xC0, 0xC0, 0xC4
 
 MozaWheelState::MozaWheelState(WheelModel model)
     : model_(model) {
+    if (model_ == WheelModel::ES) {
+        deviceName_ = "MOZA ES Wheel";
+    } else if (model_ == WheelModel::FSR) {
+        deviceName_ = "MOZA FSR Wheel";
+    } else {
+        deviceName_ = "MOZA GS Wheel";
+    }
     reset();
 }
 
 void MozaWheelState::setWheelModel(WheelModel model) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     model_ = model;
+    if (model_ == WheelModel::ES) {
+        deviceName_ = "MOZA ES Wheel";
+    } else if (model_ == WheelModel::FSR) {
+        deviceName_ = "MOZA FSR Wheel";
+    } else {
+        deviceName_ = "MOZA GS Wheel";
+    }
 }
 
 WheelModel MozaWheelState::getWheelModel() const {
@@ -49,6 +63,54 @@ WheelModel MozaWheelState::getWheelModel() const {
 uint8_t MozaWheelState::getFcPayload() const {
     std::lock_guard<std::mutex> lock(stateMutex_);
     return static_cast<uint8_t>(model_);
+}
+
+void MozaWheelState::setDeviceName(const std::string& name) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    deviceName_ = name;
+}
+
+std::string MozaWheelState::getDeviceName() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return deviceName_;
+}
+
+void MozaWheelState::setFirmwareVersion(const std::string& version) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    firmwareVersion_ = version;
+}
+
+std::string MozaWheelState::getFirmwareVersion() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return firmwareVersion_;
+}
+
+void MozaWheelState::setSerialNumber(const std::string& sn) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    serialNumber_ = sn;
+}
+
+std::string MozaWheelState::getSerialNumber() const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    return serialNumber_;
+}
+
+std::vector<uint8_t> MozaWheelState::getInfoResponse(uint8_t queryType) const {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    std::string str;
+    switch (queryType) {
+        case 0x01:
+            str = firmwareVersion_;
+            break;
+        case 0x02:
+            str = serialNumber_;
+            break;
+        case 0x00:
+        default:
+            str = deviceName_;
+            break;
+    }
+    return std::vector<uint8_t>(str.begin(), str.end());
 }
 
 void MozaWheelState::reset() {

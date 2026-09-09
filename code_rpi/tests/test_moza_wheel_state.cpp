@@ -1,21 +1,44 @@
 #include <iostream>
 #include <cassert>
+#include <string>
 #include "moza_wheel_state.hpp"
 
 void testWheelModelIdentification() {
     moza::MozaWheelState wheelEs(moza::WheelModel::ES);
     assert(wheelEs.getFcPayload() == 0x04);
+    assert(wheelEs.getDeviceName() == "MOZA ES Wheel");
 
     moza::MozaWheelState wheelGs(moza::WheelModel::GS);
     assert(wheelGs.getFcPayload() == 0x08);
+    assert(wheelGs.getDeviceName() == "MOZA GS Wheel");
 
     moza::MozaWheelState wheelFsr(moza::WheelModel::FSR);
     assert(wheelFsr.getFcPayload() == 0x0C);
+    assert(wheelFsr.getDeviceName() == "MOZA FSR Wheel");
 
     wheelEs.setWheelModel(moza::WheelModel::GS);
     assert(wheelEs.getFcPayload() == 0x08);
+    assert(wheelEs.getDeviceName() == "MOZA GS Wheel");
 
     std::cout << "[PASS] Wheel model identification test" << std::endl;
+}
+
+void testAddress0x17InfoResponses() {
+    moza::MozaWheelState wheel(moza::WheelModel::GS);
+
+    auto nameResp = wheel.getInfoResponse(0x00);
+    std::string nameStr(nameResp.begin(), nameResp.end());
+    assert(nameStr == "MOZA GS Wheel");
+
+    auto fwResp = wheel.getInfoResponse(0x01);
+    std::string fwStr(fwResp.begin(), fwResp.end());
+    assert(fwStr == "v1.2.0.8");
+
+    auto snResp = wheel.getInfoResponse(0x02);
+    std::string snStr(snResp.begin(), snResp.end());
+    assert(snStr == "GS2023080001");
+
+    std::cout << "[PASS] Address 0x17 info response test" << std::endl;
 }
 
 void testDefaultState() {
@@ -65,7 +88,6 @@ void testPaddleSetting() {
     // Right Paddle pattern: {0xC4, 0xC4, 0xC0, 0xC0, 0xC4}
     wheel.setRightPaddle(true);
     assert(wheel.getPaddle(moza::PaddleId::RIGHT) == true);
-    // Bitwise OR: 0xC2 | 0xC4 = 0xC6
     assert(wheel.getPaddlePayload(0) == static_cast<uint8_t>(0xC2 | 0xC4));
     assert(wheel.getPaddlePayload(2) == static_cast<uint8_t>(0xC0 | 0xC0));
 
@@ -108,6 +130,7 @@ void testTelemetryAndLedData() {
 int main() {
     std::cout << "Running MozaWheelState unit tests..." << std::endl;
     testWheelModelIdentification();
+    testAddress0x17InfoResponses();
     testDefaultState();
     testButtonSetting();
     testPaddleSetting();
