@@ -29,7 +29,7 @@ bool I2CHandler::initialize() {
     xfer_.control = (slaveAddress_ << 16) | 0x0305;
 
     // Pre-stage default FC response in TX FIFO
-    xfer_.txBuf[0] = static_cast<char>(wheelState_.getFcPayload());
+    xfer_.txBuf[0] = static_cast<char>(FC_PAYLOAD);
     xfer_.txCnt = 1;
 
     int status = bscXfer(&xfer_);
@@ -60,47 +60,40 @@ void I2CHandler::stop() {
 
 SlaveState I2CHandler::getNextState(uint8_t received) {
     switch (received) {
-        case 0xFC: return SlaveState::FC_RECEIVED;
-        case 0xF9: return SlaveState::F9_RECEIVED;
-        case 0xF3: return SlaveState::F3_RECEIVED;
-        case 0xDD: return SlaveState::DD_RECEIVED;
-        case 0xDE: return SlaveState::DE_RECEIVED;
-        default:   return SlaveState::NONE;
+        case 0xFC: return FC_RECEIVED;
+        case 0xF9: return F9_RECEIVED;
+        case 0xDD: return DD_RECEIVED;
+        case 0xDE: return DE_RECEIVED;
+        default:   return NONE;
     }
 }
 
 void I2CHandler::updateTxBufferForState(SlaveState state) {
     switch (state) {
-        case SlaveState::FC_RECEIVED:
-            xfer_.txBuf[0] = static_cast<char>(wheelState_.getFcPayload());
+        case FC_RECEIVED:
+            xfer_.txBuf[0] = static_cast<char>(FC_PAYLOAD);
             xfer_.txCnt = 1;
             break;
-        case SlaveState::F9_RECEIVED:
+        case F9_RECEIVED:
             xfer_.txBuf[0] = static_cast<char>(F9_PAYLOAD);
             xfer_.txCnt = 1;
             break;
-        case SlaveState::F3_RECEIVED: {
-            // Load 60-byte metadata payload (Device name, FW, SN)
-            auto metaPayload = wheelState_.getF3MetadataPayload();
-            std::memcpy(xfer_.txBuf, metaPayload.data(), metaPayload.size());
-            xfer_.txCnt = metaPayload.size();
-            break;
-        }
-        case SlaveState::DD_RECEIVED:
+        case DD_RECEIVED:
             // Load all 5 button sequence payload bytes into TX FIFO buffer
             for (size_t i = 0; i < 5; ++i) {
                 xfer_.txBuf[i] = static_cast<char>(wheelState_.getButtonPayload(i));
             }
             xfer_.txCnt = 5;
             break;
-        case SlaveState::DE_RECEIVED:
+        case DE_RECEIVED:
             // Load all 5 paddle sequence payload bytes into TX FIFO buffer
             for (size_t i = 0; i < 5; ++i) {
                 xfer_.txBuf[i] = static_cast<char>(wheelState_.getPaddlePayload(i));
             }
             xfer_.txCnt = 5;
             break;
-        case SlaveState::NONE:
+        case DB_RECEIVED:
+        case NONE:
         default:
             xfer_.txCnt = 0;
             break;
@@ -109,18 +102,23 @@ void I2CHandler::updateTxBufferForState(SlaveState state) {
 
 void I2CHandler::processReceivedByte(uint8_t byte) {
     SlaveState next = getNextState(byte);
-    if (next != SlaveState::NONE) {
+    if (next != NONE) {
         currentState_ = next;
+        if (next == DD_RECEIVED) {
+            btnSeqIdx_++;
+        } else if (next == FC_RECEIVED) {
+            btnSeqIdx_ = -1;
+        }
         updateTxBufferForState(next);
     } else {
-        currentState_ = SlaveState::NONE;
+        currentState_ = NONE;
     }
 }
 
 void I2CHandler::process() {
     if (!running_) return;
 
-    // Check BSC status & transfer FIFO (txCnt is 0 during normal polling)
+    // Check BSC status & transfer FIFO
     int status = bscXfer(&xfer_);
     if (status < 0) {
         return;
@@ -135,7 +133,7 @@ void I2CHandler::process() {
         // Push newly staged bytes to hardware TX FIFO
         if (xfer_.txCnt > 0) {
             bscXfer(&xfer_);
-            xfer_.txCnt = 0; // Reset txCnt to prevent re-pushing duplicate bytes on next loop
+            xfer_.txCnt = 0; // Reset txCnt to prevent re-pushing duplicate bytes
         }
     }
 }

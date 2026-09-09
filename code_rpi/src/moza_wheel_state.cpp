@@ -1,6 +1,5 @@
 #include "moza_wheel_state.hpp"
 #include <algorithm>
-#include <cstring>
 
 namespace moza {
 
@@ -32,116 +31,8 @@ static constexpr ButtonConfig BUTTON_MAP[] = {
 static constexpr uint8_t LEFT_PADDLE_PATTERN[5]  = {0xC2, 0xC2, 0xC0, 0xC0, 0xC2};
 static constexpr uint8_t RIGHT_PADDLE_PATTERN[5] = {0xC4, 0xC4, 0xC0, 0xC0, 0xC4};
 
-MozaWheelState::MozaWheelState(WheelModel model)
-    : model_(model) {
-    if (model_ == WheelModel::ES) {
-        deviceName_ = "MOZA ES Wheel";
-    } else if (model_ == WheelModel::FSR) {
-        deviceName_ = "MOZA FSR Wheel";
-    } else {
-        deviceName_ = "MOZA GS Wheel";
-    }
+MozaWheelState::MozaWheelState() {
     reset();
-}
-
-void MozaWheelState::setWheelModel(WheelModel model) {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    model_ = model;
-    if (model_ == WheelModel::ES) {
-        deviceName_ = "MOZA ES Wheel";
-    } else if (model_ == WheelModel::FSR) {
-        deviceName_ = "MOZA FSR Wheel";
-    } else {
-        deviceName_ = "MOZA GS Wheel";
-    }
-}
-
-WheelModel MozaWheelState::getWheelModel() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return model_;
-}
-
-uint8_t MozaWheelState::getFcPayload() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return static_cast<uint8_t>(model_);
-}
-
-void MozaWheelState::setDeviceName(const std::string& name) {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    deviceName_ = name;
-}
-
-std::string MozaWheelState::getDeviceName() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return deviceName_;
-}
-
-void MozaWheelState::setFirmwareVersion(const std::string& version) {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    firmwareVersion_ = version;
-}
-
-std::string MozaWheelState::getFirmwareVersion() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return firmwareVersion_;
-}
-
-void MozaWheelState::setSerialNumber(const std::string& sn) {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    serialNumber_ = sn;
-}
-
-std::string MozaWheelState::getSerialNumber() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return serialNumber_;
-}
-
-std::array<uint8_t, MozaWheelState::F3_PAYLOAD_SIZE> MozaWheelState::getF3MetadataPayload() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    std::array<uint8_t, F3_PAYLOAD_SIZE> buffer{};
-    buffer.fill(0x00);
-
-    // Format: Device Name null-padded, followed by FW version and SN
-    size_t offset = 0;
-
-    // Copy Device Name
-    size_t nameLen = std::min(deviceName_.length(), static_cast<size_t>(20));
-    std::memcpy(&buffer[offset], deviceName_.c_str(), nameLen);
-    offset += 20;
-
-    // Copy Firmware Version
-    size_t fwLen = std::min(firmwareVersion_.length(), static_cast<size_t>(16));
-    std::memcpy(&buffer[offset], firmwareVersion_.c_str(), fwLen);
-    offset += 16;
-
-    // Copy Serial Number
-    size_t snLen = std::min(serialNumber_.length(), static_cast<size_t>(16));
-    std::memcpy(&buffer[offset], serialNumber_.c_str(), snLen);
-    offset += 16;
-
-    // Set trailing status bytes
-    buffer[58] = 0x25;
-    buffer[59] = 0x12;
-
-    return buffer;
-}
-
-std::vector<uint8_t> MozaWheelState::getInfoResponse(uint8_t queryType) const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    std::string str;
-    switch (queryType) {
-        case 0x01:
-            str = firmwareVersion_;
-            break;
-        case 0x02:
-            str = serialNumber_;
-            break;
-        case 0x00:
-        default:
-            str = deviceName_;
-            break;
-    }
-    return std::vector<uint8_t>(str.begin(), str.end());
 }
 
 void MozaWheelState::reset() {
@@ -151,8 +42,6 @@ void MozaWheelState::reset() {
     buttonStates_ = 0;
     leftPaddlePressed_ = false;
     rightPaddlePressed_ = false;
-    ledBuffer_.clear();
-    displayBuffer_.clear();
 }
 
 bool MozaWheelState::setButton(uint8_t buttonNum, bool pressed) {
@@ -263,45 +152,6 @@ void MozaWheelState::setPaddlePayload(size_t index, uint8_t value) {
     if (index < PAYLOAD_SIZE) {
         paddlePayloads_[index] = value;
     }
-}
-
-void MozaWheelState::updateLedData(const uint8_t* data, size_t length) {
-    TelemetryCallback cb = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(stateMutex_);
-        ledBuffer_.assign(data, data + length);
-        cb = telemetryCallback_;
-    }
-    if (cb) {
-        cb(0x08, std::vector<uint8_t>(data, data + length));
-    }
-}
-
-void MozaWheelState::updateDisplayTelemetry(const uint8_t* data, size_t length) {
-    TelemetryCallback cb = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(stateMutex_);
-        displayBuffer_.assign(data, data + length);
-        cb = telemetryCallback_;
-    }
-    if (cb) {
-        cb(0x20, std::vector<uint8_t>(data, data + length));
-    }
-}
-
-std::vector<uint8_t> MozaWheelState::getLedData() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return ledBuffer_;
-}
-
-std::vector<uint8_t> MozaWheelState::getDisplayTelemetry() const {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    return displayBuffer_;
-}
-
-void MozaWheelState::setTelemetryCallback(TelemetryCallback cb) {
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    telemetryCallback_ = cb;
 }
 
 } // namespace moza

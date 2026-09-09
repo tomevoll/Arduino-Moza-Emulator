@@ -9,18 +9,18 @@
 namespace moza {
 
 constexpr uint8_t SLAVE_ADDRESS = 0x09;
-constexpr uint8_t LED_ADDRESS   = 0x08;
-constexpr uint8_t DISPLAY_ADDRESS = 0x20;
 
+constexpr uint8_t FC_PAYLOAD = 0x04;  // response for DW: FC -> DR: 04
 constexpr uint8_t F9_PAYLOAD = 0x02;  // response for DW: F9 -> DR: 02
 
-enum class SlaveState {
+// finite state machine states matching original Arduino code exactly
+enum SlaveState {
     NONE,
     FC_RECEIVED,
     F9_RECEIVED,
-    F3_RECEIVED,  // 60-byte metadata payload query
     DD_RECEIVED,
-    DE_RECEIVED
+    DB_RECEIVED,
+    DE_RECEIVED,
 };
 
 class I2CHandler {
@@ -31,7 +31,7 @@ public:
     // Initialize pigpio and BSC I2C Slave interface
     bool initialize();
 
-    // Process pending I2C transactions (call in loop or thread)
+    // Process pending I2C transactions
     void process();
 
     // Stop I2C Slave interface
@@ -45,7 +45,8 @@ private:
     uint8_t slaveAddress_;
     std::atomic<bool> running_{false};
 
-    SlaveState currentState_{SlaveState::NONE};
+    SlaveState currentState_{NONE};
+    int8_t btnSeqIdx_{-1};
 
     bsc_xfer_t xfer_{};
 

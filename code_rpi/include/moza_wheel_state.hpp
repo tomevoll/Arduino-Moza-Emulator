@@ -5,21 +5,8 @@
 #include <cstddef>
 #include <mutex>
 #include <array>
-#include <vector>
-#include <string>
-#include <functional>
 
 namespace moza {
-
-constexpr uint8_t SLAVE_ADDRESS   = 0x09; // Primary I2C slave address on wheel bus
-constexpr uint8_t LED_ADDRESS     = 0x08; // Shift lights & LED controls
-constexpr uint8_t DISPLAY_ADDRESS = 0x20; // Display screen telemetry
-
-enum class WheelModel {
-    ES = 0x04,   // Standard MOZA ES Wheel
-    GS = 0x08,   // MOZA GS GT Wheel (supports display/LEDs)
-    FSR = 0x0C   // MOZA FSR Formula Wheel with Screen
-};
 
 enum class PaddleId {
     LEFT = 13,
@@ -32,36 +19,11 @@ struct ButtonConfig {
     uint8_t value;  // Bitmask value
 };
 
-using TelemetryCallback = std::function<void(uint8_t address, const std::vector<uint8_t>& data)>;
-
 class MozaWheelState {
 public:
     static constexpr size_t PAYLOAD_SIZE = 5;
-    static constexpr size_t F3_PAYLOAD_SIZE = 60; // 60-byte metadata buffer for 0xF3 query
-    static constexpr size_t TELEMETRY_BUFFER_SIZE = 256;
 
-    explicit MozaWheelState(WheelModel model = WheelModel::GS);
-
-    // Wheel model configuration
-    void setWheelModel(WheelModel model);
-    WheelModel getWheelModel() const;
-    uint8_t getFcPayload() const;
-
-    // Device Metadata strings
-    void setDeviceName(const std::string& name);
-    std::string getDeviceName() const;
-
-    void setFirmwareVersion(const std::string& version);
-    std::string getFirmwareVersion() const;
-
-    void setSerialNumber(const std::string& sn);
-    std::string getSerialNumber() const;
-
-    // Get 60-byte metadata payload response for command 0xF3
-    std::array<uint8_t, F3_PAYLOAD_SIZE> getF3MetadataPayload() const;
-
-    // Formatted ASCII info response helper
-    std::vector<uint8_t> getInfoResponse(uint8_t queryType = 0x00) const;
+    MozaWheelState();
 
     // Button state modification
     bool setButton(uint8_t buttonNum, bool pressed);
@@ -81,26 +43,11 @@ public:
     void setButtonPayload(size_t index, uint8_t value);
     void setPaddlePayload(size_t index, uint8_t value);
 
-    // Telemetry / LED data from wheelbase (Physical Addresses 0x08 & 0x20)
-    void updateLedData(const uint8_t* data, size_t length);
-    void updateDisplayTelemetry(const uint8_t* data, size_t length);
-
-    std::vector<uint8_t> getLedData() const;
-    std::vector<uint8_t> getDisplayTelemetry() const;
-
-    void setTelemetryCallback(TelemetryCallback cb);
-
     // Reset all inputs to unpressed state
     void reset();
 
 private:
     mutable std::mutex stateMutex_;
-
-    WheelModel model_{WheelModel::GS};
-
-    std::string deviceName_{"MOZA GS Wheel"};
-    std::string firmwareVersion_{"v1.2.0.8"};
-    std::string serialNumber_{"GS2023080001"};
 
     std::array<uint8_t, PAYLOAD_SIZE> btnPayloads_{};
     std::array<uint8_t, PAYLOAD_SIZE> paddlePayloads_{};
@@ -110,12 +57,6 @@ private:
 
     // Bitfield tracking for individual button states
     uint64_t buttonStates_{0};
-
-    // Telemetry & LED data buffers
-    std::vector<uint8_t> ledBuffer_{};
-    std::vector<uint8_t> displayBuffer_{};
-
-    TelemetryCallback telemetryCallback_{nullptr};
 
     void updatePaddlePayloads();
 };
