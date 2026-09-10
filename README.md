@@ -19,7 +19,7 @@
 ## Overview
 
 - **Context:**  
-  This work targets the **MOZA ES Wheel**, which is recognized by various MOZA Racing Wheel Bases through a specific I2C payload. We will discuss the various payloads and what they mean based on context that is known. A lot of what is done here is based on assumptions that were done during testing. These details are not known to be completely accurate as the testing was only done on a single wheelbase and only the ES wheel. The solution is also used in a very custom context as a personal project so although the findings here are useful to anyone, the specific application would need to be modified. 
+  This work targets the **MOZA ES Wheel**, which is recognized by various MOZA Racing Wheel Bases through a specific I2C payload. We will discuss the various payloads and what they mean based on context that is known. A lot of what is done here is based on assumptions that were done during testing. These details are not known to be completely accurate as the testing was only done on a single wheelbase and only the ES wheel. The solution is also used in a very custom context as a personal project so although the findings here are useful to anyone, the specific application would need to be modified.
   
 - **Firmware Versions:**  
   The protocol is known to work on firmware versions:
@@ -38,32 +38,32 @@
 ## Code Structure
 
 - **I2C Communication:**
-  - **`i2c_handler.cpp`:**  
+  - **`i2c_handler.cpp`:**
     Implements the I2C event handlers:
     - **Request Event:** Sends a payload (e.g., FC_PAYLOAD) based on the current system state.
     - **Receive Event:** Processes command bytes from the master (e.g., `0xFC`, `0xF9`, `0xDD`, `0xDE`) to set the active state and payload index.
 
 - **Input Handlers:**
-  - **`button_handler.cpp`:**  
+  - **`button_handler.cpp`:**
     Handles regular button inputs. Buttons are mapped (see [Button Mapping Table](#button-mapping-table)) to specific payload indices and values.
-  - **`encoder_handler.cpp`:**  
+  - **`encoder_handler.cpp`:**
     Processes rotary encoder events. Each encoder uses two keys to determine rotation and updates its payload accordingly.
-  - **`paddle_handler.cpp`:**  
+  - **`paddle_handler.cpp`:**
     Manages paddle inputs using predefined payloads for left and right paddles.
-  - **`keypad_handler.cpp`:**  
+  - **`keypad_handler.cpp`:**
     Uses the Keypad library to poll a matrix of buttons and dispatch events to the proper handlers.
 
-- **Peripheral Classes:**  
-  - **`encoder.cpp`** and **`paddle.cpp`:**  
+- **Peripheral Classes:**
+  - **`encoder.cpp`** and **`paddle.cpp`:**
     Provide low-level functionality for managing the state changes of rotary encoders and paddles.
 
 - **Configuration Files:**
-  - **`button_mapping.h`:**  
+  - **`button_mapping.h`:**
     Defines mappings of keys to payload indices and values.
-  - **`keypad_config.h`:**  
+  - **`keypad_config.h`:**
     Sets up the keypad matrix (rows, columns, pins, and key layout).
 
-- **`main.cpp`:**  
+- **`main.cpp`:**
   - Initializes I2C communication using a defined slave address (`SLAVE_ADDRESS`).
   - Registers I2C event handlers (`requestEvent` and `receiveEvent`).
   - Initializes the keypad and continuously processes keypad events.
@@ -170,11 +170,11 @@ NOTE: Known issue is spinning the encoder too fast causes the encoder to add two
 
 ### Led Handling
 
-LED's are handled with the `0x08` address. There is a single response that handles brightness and the rest of the responses determine whether the LED is on or off. There is not LED handling done here but I was able to successfully replicate the master and write to the wheels LEDs through some testing. 
+LED's are handled with the `0x08` address. There is a single response that handles brightness and the rest of the responses determine whether the LED is on or off. There is not LED handling done here but I was able to successfully replicate the master and write to the wheels LEDs through some testing.
 
 ### Unkown Address
 
-One address that is unaccounted for on the ES wheel is the `0x20` address. Although this is only an assumption, the only feature that the ES wheel doesnt have that other wheels that are compatible do have is the display found . 
+One address that is unaccounted for on the ES wheel is the `0x20` address. Although this is only an assumption, the only feature that the ES wheel doesnt have that other wheels that are compatible do have is the display found .
 
 ## Reverse Engineering Process
 

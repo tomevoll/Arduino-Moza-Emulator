@@ -1,0 +1,141 @@
+#include "i2c_handler.hpp"
+#include <iostream>
+#include <cstring>
+
+namespace moza {
+
+I2CHandler::I2CHandler(MozaWheelState& wheelState, uint8_t slaveAddress)
+    : wheelState_(wheelState), slaveAddress_(slaveAddress) {}
+
+I2CHandler::~I2CHandler() {
+    stop();
+}
+
+bool I2CHandler::initialize() {
+    if (gpioInitialise() < 0) {
+        std::cerr << "Failed to initialize pigpio library." << std::endl;
+        return false;
+    }
+
+    // Configure BSC (Broadcom Serial Controller) Slave mode
+    // GPIO 10 = SDA, GPIO 11 = SCL (Pin 19 and Pin 23 on Pi 4)
+    // Control word:
+    // Bits 31-16: I2C slave address (0x09)
+    // Bit 9: Enable TX FIFO (0x0200)
+    // Bit 8: Enable RX FIFO (0x0100)
+    // Bit 2: Enable I2C mode (0x0004)
+    // Bit 0: Enable BSC peripheral (0x0001)
+    // Control mask: 0x0305
+    xfer_.control = (slaveAddress_ << 16) | 0x0305;
+
+    // Pre-stage default FC response in TX FIFO
+    xfer_.txBuf[0] = static_cast<char>(FC_PAYLOAD);
+    xfer_.txCnt = 1;
+
+    int status = bscXfer(&xfer_);
+    xfer_.txCnt = 0; // Reset txCnt so subsequent polling does not duplicate FIFO entries
+
+    if (status < 0) {
+        std::cerr << "Failed to initialize BSC I2C Slave. Error code: " << status << std::endl;
+        gpioTerminate();
+        return false;
+    }
+
+    running_ = true;
+    std::cout << "BSC I2C Slave initialized on GPIO 10 (SDA) and GPIO 11 (SCL) at address 0x"
+              << std::hex << (int)slaveAddress_ << std::dec << std::endl;
+    return true;
+}
+
+void I2CHandler::stop() {
+    if (running_) {
+        xfer_.control = 0; // Disable BSC peripheral
+        xfer_.txCnt = 0;
+        bscXfer(&xfer_);
+        gpioTerminate();
+        running_ = false;
+        std::cout << "BSC I2C Slave stopped." << std::endl;
+    }
+}
+
+SlaveState I2CHandler::getNextState(uint8_t received) {
+    switch (received) {
+        case 0xFC: return FC_RECEIVED;
+        case 0xF9: return F9_RECEIVED;
+        case 0xDD: return DD_RECEIVED;
+        case 0xDE: return DE_RECEIVED;
+        default:   return NONE;
+    }
+}
+
+void I2CHandler::updateTxBufferForState(SlaveState state) {
+    switch (state) {
+        case FC_RECEIVED:
+            xfer_.txBuf[0] = static_cast<char>(FC_PAYLOAD);
+            xfer_.txCnt = 1;
+            break;
+        case F9_RECEIVED:
+            xfer_.txBuf[0] = static_cast<char>(F9_PAYLOAD);
+            xfer_.txCnt = 1;
+            break;
+        case DD_RECEIVED:
+            // Load all 5 button sequence payload bytes into TX FIFO buffer
+            for (size_t i = 0; i < 5; ++i) {
+                xfer_.txBuf[i] = static_cast<char>(wheelState_.getButtonPayload(i));
+            }
+            xfer_.txCnt = 5;
+            break;
+        case DE_RECEIVED:
+            // Load all 5 paddle sequence payload bytes into TX FIFO buffer
+            for (size_t i = 0; i < 5; ++i) {
+                xfer_.txBuf[i] = static_cast<char>(wheelState_.getPaddlePayload(i));
+            }
+            xfer_.txCnt = 5;
+            break;
+        case DB_RECEIVED:
+        case NONE:
+        default:
+            xfer_.txCnt = 0;
+            break;
+    }
+}
+
+void I2CHandler::processReceivedByte(uint8_t byte) {
+    SlaveState next = getNextState(byte);
+    if (next != NONE) {
+        currentState_ = next;
+        if (next == DD_RECEIVED) {
+            btnSeqIdx_++;
+        } else if (next == FC_RECEIVED) {
+            btnSeqIdx_ = -1;
+        }
+        updateTxBufferForState(next);
+    } else {
+        currentState_ = NONE;
+    }
+}
+
+void I2CHandler::process() {
+    if (!running_) return;
+
+    // Check BSC status & transfer FIFO
+    int status = bscXfer(&xfer_);
+    if (status < 0) {
+        return;
+    }
+
+    // Process received bytes from I2C Master (Wheelbase) on I2C slave address (0x09)
+    if (xfer_.rxCnt > 0) {
+        for (int i = 0; i < xfer_.rxCnt; ++i) {
+            processReceivedByte(reinterpret_cast<uint8_t*>(xfer_.rxBuf)[i]);
+        }
+
+        // Push newly staged bytes to hardware TX FIFO
+        if (xfer_.txCnt > 0) {
+            bscXfer(&xfer_);
+            xfer_.txCnt = 0; // Reset txCnt to prevent re-pushing duplicate bytes
+        }
+    }
+}
+
+} // namespace moza
