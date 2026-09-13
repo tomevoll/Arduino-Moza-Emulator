@@ -1,179 +1,80 @@
 /*
- * I2C Passive Bus Sniffer & Line Status Analyzer for ATmega32u4 (Pro Micro)
+ * Interrupt-Driven High-Speed I2C Bus Sniffer with Microsecond Timestamps
+ * for ATmega32u4 (Pro Micro / Micro)
  *
- * Passive non-intrusive monitoring on default I2C pins:
- *   SDA -> Pin 2 (PD1 / INT1)
- *   SCL -> Pin 3 (PD0 / INT0)
- *
- * Outputs continuous RAW LINE STATUS (L,SCL,SDA) for exact waveform graphing
- * AND DECODED I2C PROTOCOL EVENTS (E,START, E,ADDR,0x09,W,ACK, E,DATA,0xFC,ACK, E,STOP)
- * over high-speed USB CDC Serial (500000 baud).
+ * Uses hardware pin interrupts (INT0 on Pin 3 SCL, INT1 on Pin 2 SDA) with CHANGE mode.
+ * Captures pin transitions and exact microsecond timestamps (micros()) into a fast ring buffer.
+ * Streams 5-byte sample packets (Sync+State byte + 32-bit uint32_t timestamp) over USB CDC Serial
+ * for accurate time-axis rendering and protocol decoding in the Processing GUI app.
  */
 
 #include <Arduino.h>
 
-#define SDA_PIN 2  // ATmega32u4 PD1
-#define SCL_PIN 3  // ATmega32u4 PD0
+#define SDA_PIN 2  // ATmega32u4 PD1 / INT1
+#define SCL_PIN 3  // ATmega32u4 PD0 / INT0
 
-// Direct port bit reads for ATmega32u4 PIND register
+// Fast direct port access for ATmega32u4 PIND register
 #define READ_SDA() ((PIND & (1 << 1)) != 0)
 #define READ_SCL() ((PIND & (1 << 0)) != 0)
 
-inline void sendRawLineStatus(bool scl, bool sda) {
-    Serial.print("L,");
-    Serial.print(scl ? 1 : 0);
-    Serial.print(",");
-    Serial.println(sda ? 1 : 0);
+struct Sample {
+    uint32_t timestamp; // microsecond timestamp
+    uint8_t state;      // 0x80 | (scl << 1) | sda
+};
+
+// Ring buffer size
+#define BUFFER_SIZE 256
+volatile Sample sampleBuffer[BUFFER_SIZE];
+volatile uint8_t head = 0;
+volatile uint8_t tail = 0;
+
+// Interrupt Service Routines
+void isrLineChange() {
+    uint32_t ts = micros(); // High resolution microsecond timer
+    uint8_t pind = PIND;
+    uint8_t scl = (pind & (1 << 0)) ? 1 : 0;
+    uint8_t sda = (pind & (1 << 1)) ? 1 : 0;
+
+    uint8_t stateByte = 0x80 | (scl << 1) | sda;
+
+    uint8_t nextHead = (head + 1) % BUFFER_SIZE;
+    if (nextHead != tail) {
+        sampleBuffer[head].timestamp = ts;
+        sampleBuffer[head].state = stateByte;
+        head = nextHead;
+    }
 }
 
 void setup() {
-    // High impedance passive monitoring - strictly INPUT mode (never drive outputs)
+    // High impedance passive monitoring - strictly INPUT mode (never drive bus)
     pinMode(SDA_PIN, INPUT);
     pinMode(SCL_PIN, INPUT);
 
-    Serial.begin(500000); // USB CDC serial at max USB speed
+    Serial.begin(500000); // USB CDC max speed
     while (!Serial && millis() < 2000);
 
-    Serial.println("I2C_ANALYZER_READY");
+    // Attach hardware pin interrupts for INT0 (Pin 3 / SCL) and INT1 (Pin 2 / SDA)
+    attachInterrupt(digitalPinToInterrupt(SCL_PIN), isrLineChange, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(SDA_PIN), isrLineChange, CHANGE);
+
+    // Initial state sample
+    isrLineChange();
 }
 
 void loop() {
-    static bool prevSDA = true;
-    static bool prevSCL = true;
+    // Drain ring buffer and stream 5-byte sample packets over USB Serial
+    while (tail != head) {
+        Sample s = sampleBuffer[tail];
+        tail = (tail + 1) % BUFFER_SIZE;
 
-    bool curSDA = READ_SDA();
-    bool curSCL = READ_SCL();
+        // Packet format: [Sync+State Byte, TS_Byte3, TS_Byte2, TS_Byte1, TS_Byte0]
+        uint8_t pkt[5];
+        pkt[0] = s.state;
+        pkt[1] = static_cast<uint8_t>((s.timestamp >> 24) & 0xFF);
+        pkt[2] = static_cast<uint8_t>((s.timestamp >> 16) & 0xFF);
+        pkt[3] = static_cast<uint8_t>((s.timestamp >> 8) & 0xFF);
+        pkt[4] = static_cast<uint8_t>(s.timestamp & 0xFF);
 
-    // 1. ALWAYS emit RAW LINE STATUS whenever either line changes level
-    if (curSDA != prevSDA || curSCL != prevSCL) {
-        sendRawLineStatus(curSCL, curSDA);
-
-        // 2. Detect START Condition: SDA drops LOW while SCL is HIGH
-        if (prevSDA && !curSDA && curSCL) {
-            Serial.println("E,START");
-
-            bool inTransfer = true;
-            uint8_t byteIndex = 0;
-
-            while (inTransfer) {
-                uint8_t rxByte = 0;
-
-                // Read 8 Data Bits (Bit 7 down to Bit 0)
-                for (int bit = 7; bit >= 0; bit--) {
-                    // Wait for SCL to go LOW
-                    while (READ_SCL()) {
-                        bool sdaNow = READ_SDA();
-                        if (sdaNow != curSDA) {
-                            sendRawLineStatus(true, sdaNow);
-                            curSDA = sdaNow;
-                            // Check for STOP condition while SCL is HIGH
-                            if (sdaNow) {
-                                Serial.println("E,STOP");
-                                inTransfer = false;
-                                break;
-                            }
-                        }
-                    }
-                    if (!inTransfer) break;
-
-                    // Emit SCL LOW line status
-                    sendRawLineStatus(false, curSDA);
-
-                    // Wait for SCL rising edge to go HIGH
-                    while (!READ_SCL()) {
-                        bool sdaNow = READ_SDA();
-                        if (sdaNow != curSDA) {
-                            sendRawLineStatus(false, sdaNow);
-                            curSDA = sdaNow;
-                        }
-                    }
-
-                    // Sample SDA bit while SCL is HIGH
-                    curSDA = READ_SDA();
-                    sendRawLineStatus(true, curSDA);
-                    if (curSDA) {
-                        rxByte |= (1 << bit);
-                    }
-
-                    // Wait for SCL to fall back LOW
-                    while (READ_SCL()) {
-                        bool sdaNow = READ_SDA();
-                        if (sdaNow != curSDA) {
-                            sendRawLineStatus(true, sdaNow);
-                            curSDA = sdaNow;
-                            // Check for STOP condition
-                            if (sdaNow) {
-                                Serial.println("E,STOP");
-                                inTransfer = false;
-                                break;
-                            }
-                            // Check for REPEATED START
-                            if (!sdaNow) {
-                                Serial.println("E,RESTART");
-                                byteIndex = 0;
-                                break;
-                            }
-                        }
-                    }
-                    if (!inTransfer) break;
-
-                    sendRawLineStatus(false, curSDA);
-                }
-
-                if (!inTransfer) break;
-
-                // 3. Read 9th Pulse: ACK / NACK
-                while (!READ_SCL()) {
-                    bool sdaNow = READ_SDA();
-                    if (sdaNow != curSDA) {
-                        sendRawLineStatus(false, sdaNow);
-                        curSDA = sdaNow;
-                    }
-                }
-
-                // Sample 9th bit on SCL HIGH
-                curSDA = READ_SDA();
-                bool isAck = !curSDA; // ACK is LOW, NACK is HIGH
-                sendRawLineStatus(true, curSDA);
-
-                // Wait for 9th SCL pulse to fall LOW
-                while (READ_SCL()) {
-                    bool sdaNow = READ_SDA();
-                    if (sdaNow != curSDA) {
-                        sendRawLineStatus(true, sdaNow);
-                        curSDA = sdaNow;
-                    }
-                }
-                sendRawLineStatus(false, curSDA);
-
-                // Output decoded byte frame event
-                byteIndex++;
-                if (byteIndex == 1) {
-                    uint8_t addr = (rxByte >> 1);
-                    bool isRead = (rxByte & 0x01) != 0;
-                    Serial.print("E,ADDR,0x");
-                    if (addr < 0x10) Serial.print("0");
-                    Serial.print(addr, HEX);
-                    Serial.print(",");
-                    Serial.print(isRead ? "R" : "W");
-                    Serial.print(",");
-                    Serial.println(isAck ? "ACK" : "NACK");
-                } else {
-                    Serial.print("E,DATA,0x");
-                    if (rxByte < 0x10) Serial.print("0");
-                    Serial.print(rxByte, HEX);
-                    Serial.print(",");
-                    Serial.println(isAck ? "ACK" : "NACK");
-                }
-            }
-        }
-
-        // Detect STOP Condition: SDA rises HIGH while SCL is HIGH
-        if (!prevSDA && curSDA && curSCL) {
-            Serial.println("E,STOP");
-        }
-
-        prevSDA = curSDA;
-        prevSCL = curSCL;
+        Serial.write(pkt, 5);
     }
 }

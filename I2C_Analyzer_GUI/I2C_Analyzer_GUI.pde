@@ -8,28 +8,36 @@ boolean portSelected = false;
 int maxSamples = 600;
 int[] sclHistory = new int[maxSamples];
 int[] sdaHistory = new int[maxSamples];
+long[] timeHistory = new long[maxSamples];
 int sampleIndex = 0;
 
 // Log Messages Console
 ArrayList<String> eventLog = new ArrayList<String>();
-int maxLogLines = 25;
+int maxLogLines = 22;
+
+// Processing-Side I2C State Machine Decoder
+int prevSCL = 1;
+int prevSDA = 1;
+boolean inFrame = false;
+int currentByte = 0;
+int bitCount = 0;
+int frameByteIndex = 0;
 
 void setup() {
   size(1000, 700);
-  surface.setTitle("I2C Passive Logic Analyzer & Sniffer - Processing GUI");
+  surface.setTitle("I2C Passive Logic Analyzer & Decoder with Microsecond Timestamps");
 
-  // Initialize sample history with high line state
   for (int i = 0; i < maxSamples; i++) {
     sclHistory[i] = 1;
     sdaHistory[i] = 1;
+    timeHistory[i] = 0;
   }
 
-  // List available serial ports
   println("Available Serial Ports:");
   printArray(Serial.list());
 
   if (Serial.list().length > 0) {
-    portName = Serial.list()[0]; // Default to first available port
+    portName = Serial.list()[0];
   }
 }
 
@@ -50,10 +58,10 @@ void drawPortSelectionScreen() {
   fill(255);
   textAlign(CENTER, CENTER);
   textSize(22);
-  text("I2C Passive Analyzer - Select USB Serial Port", width / 2, 80);
+  text("I2C Passive Interrupt Sniffer - Select USB Serial Port", width / 2, 80);
 
   textSize(14);
-  text("Press keys 0-9 to select port, or click on a port below:", width / 2, 120);
+  text("Press keys 0-9 or click on a port below:", width / 2, 120);
 
   String[] ports = Serial.list();
   for (int i = 0; i < ports.length && i < 10; i++) {
@@ -96,64 +104,96 @@ void connectToPort(String p) {
   try {
     portName = p;
     myPort = new Serial(this, portName, 500000);
-    myPort.bufferUntil('\n');
     portSelected = true;
-    eventLog.add("[SYSTEM] Connected to " + portName + " at 500000 baud.");
+    addLog("[SYSTEM] Connected to " + portName + " (Timestamped Hardware Interrupt Stream).");
   } catch (Exception e) {
     println("Error opening port: " + e.getMessage());
   }
 }
 
 void readSerialData() {
-  while (myPort != null && myPort.available() > 0) {
-    String line = myPort.readStringUntil('\n');
-    if (line != null) {
-      line = trim(line);
-      processIncomingLine(line);
-    }
-  }
-}
+  // Read 5-byte sample packets: [stateByte, TS3, TS2, TS1, TS0]
+  while (myPort != null && myPort.available() >= 5) {
+    int stateByte = myPort.read();
+    if ((stateByte & 0x80) != 0) {
+      int scl = (stateByte >> 1) & 0x01;
+      int sda = stateByte & 0x01;
 
-void processIncomingLine(String line) {
-  if (line.startsWith("L,")) {
-    // Pin state update packet: L,SCL,SDA
-    String[] parts = split(line, ',');
-    if (parts.length >= 3) {
-      int scl = int(parts[1]);
-      int sda = int(parts[2]);
+      long ts3 = myPort.read() & 0xFF;
+      long ts2 = myPort.read() & 0xFF;
+      long ts1 = myPort.read() & 0xFF;
+      long ts0 = myPort.read() & 0xFF;
+      long microTs = (ts3 << 24) | (ts2 << 16) | (ts1 << 8) | ts0;
 
+      // Update Graph History
       sclHistory[sampleIndex] = scl;
       sdaHistory[sampleIndex] = sda;
+      timeHistory[sampleIndex] = microTs;
       sampleIndex = (sampleIndex + 1) % maxSamples;
-    }
-  } else if (line.startsWith("E,")) {
-    // Decoded I2C Event packet
-    String eventStr = parseEventLine(line);
-    if (eventStr.length() > 0) {
-      eventLog.add(eventStr);
-      if (eventLog.size() > maxLogLines) {
-        eventLog.remove(0);
-      }
+
+      // Processing-Side Protocol Decoder
+      decodeI2C(scl, sda, microTs);
+
+      prevSCL = scl;
+      prevSDA = sda;
     }
   }
 }
 
-String parseEventLine(String line) {
-  String[] parts = split(line, ',');
-  if (parts.length < 2) return "";
+void decodeI2C(int scl, int sda, long ts) {
+  String timePrefix = "[" + String.format("%08d", ts % 100000000L) + " us] ";
 
-  String type = parts[1];
-  if (type.equals("START")) return ">> [START CONDITION]";
-  if (type.equals("STOP")) return "<< [STOP CONDITION]";
-  if (type.equals("RESTART")) return ">> [REPEATED START]";
+  // START Condition: SDA falls from 1 to 0 while SCL is HIGH
+  if (prevSDA == 1 && sda == 0 && scl == 1 && prevSCL == 1) {
+    if (!inFrame) {
+      addLog(timePrefix + ">> [START CONDITION]");
+    } else {
+      addLog(timePrefix + ">> [REPEATED START]");
+    }
+    inFrame = true;
+    currentByte = 0;
+    bitCount = 0;
+    frameByteIndex = 0;
+    return;
+  }
 
-  if (type.equals("ADDR") && parts.length >= 5) {
-    return "ADDR  : " + parts[2] + " (" + parts[3] + ") -> " + parts[4];
+  // STOP Condition: SDA rises from 0 to 1 while SCL is HIGH
+  if (prevSDA == 0 && sda == 1 && scl == 1 && prevSCL == 1) {
+    if (inFrame) {
+      addLog(timePrefix + "<< [STOP CONDITION]");
+      inFrame = false;
+    }
+    return;
   }
-  if (type.equals("DATA") && parts.length >= 4) {
-    return "DATA  : " + parts[2] + " -> " + parts[3];
+
+  // Sample Data Bits on SCL Rising Edge (0 to 1)
+  if (prevSCL == 0 && scl == 1 && inFrame) {
+    if (bitCount < 8) {
+      currentByte = (currentByte << 1) | sda;
+      bitCount++;
+    } else if (bitCount == 8) {
+      boolean ack = (sda == 0);
+      frameByteIndex++;
+
+      if (frameByteIndex == 1) {
+        int addr = (currentByte >> 1) & 0x7F;
+        boolean isRead = (currentByte & 0x01) != 0;
+        addLog(timePrefix + "ADDR  : 0x" + hex(addr, 2) + " (" + (isRead ? "R" : "W") + ") -> " + (ack ? "ACK" : "NACK"));
+      } else {
+        addLog(timePrefix + "DATA  : 0x" + hex(currentByte, 2) + " -> " + (ack ? "ACK" : "NACK"));
+      }
+
+      currentByte = 0;
+      bitCount = 0;
+    }
   }
-  return line;
+}
+
+void addLog(String msg) {
+  eventLog.add(msg);
+  if (eventLog.size() > maxLogLines) {
+    eventLog.remove(0);
+  }
 }
 
 void drawHeader() {
@@ -164,12 +204,12 @@ void drawHeader() {
   fill(0, 220, 255);
   textAlign(LEFT, CENTER);
   textSize(18);
-  text("I2C Passive Logic Analyzer & Sniffer", 20, 25);
+  text("I2C Passive Logic Analyzer & Decoder (Microsecond Timestamps)", 20, 25);
 
   fill(180, 200, 220);
   textSize(12);
   textAlign(RIGHT, CENTER);
-  text("Port: " + portName + " (500k Baud) | Passive Sniffing (SDA: Pin 2, SCL: Pin 3)", width - 20, 25);
+  text("Port: " + portName + " (500k Baud) | Timestamped Hardware Interrupts", width - 20, 25);
 }
 
 void drawWaveformGraphs() {
@@ -241,7 +281,7 @@ void drawDecodedEventLog() {
   fill(0, 200, 255);
   textAlign(LEFT, TOP);
   textSize(14);
-  text("Decoded I2C Bus Traffic & Data Frames:", logX + 15, logY + 12);
+  text("Decoded I2C Bus Traffic with Microsecond Timestamps:", logX + 15, logY + 12);
 
   stroke(40, 50, 65);
   line(logX + 15, logY + 35, logX + logW - 15, logY + 35);
