@@ -64,16 +64,17 @@ void setup() {
 void loop() {
     // Drain ring buffer and stream 5-byte sample packets over USB Serial
     while (tail != head) {
-        Sample s = sampleBuffer[tail];
+        uint32_t ts = sampleBuffer[tail].timestamp;
+        uint8_t st = sampleBuffer[tail].state;
         tail = (tail + 1) % BUFFER_SIZE;
 
         // Packet format: [Sync+State Byte, TS_Byte3, TS_Byte2, TS_Byte1, TS_Byte0]
         uint8_t pkt[5];
-        pkt[0] = s.state;
-        pkt[1] = static_cast<uint8_t>((s.timestamp >> 24) & 0xFF);
-        pkt[2] = static_cast<uint8_t>((s.timestamp >> 16) & 0xFF);
-        pkt[3] = static_cast<uint8_t>((s.timestamp >> 8) & 0xFF);
-        pkt[4] = static_cast<uint8_t>(s.timestamp & 0xFF);
+        pkt[0] = st;
+        pkt[1] = static_cast<uint8_t>((ts >> 24) & 0xFF);
+        pkt[2] = static_cast<uint8_t>((ts >> 16) & 0xFF);
+        pkt[3] = static_cast<uint8_t>((ts >> 8) & 0xFF);
+        pkt[4] = static_cast<uint8_t>(ts & 0xFF);
 
         Serial.write(pkt, 5);
     }
