@@ -5,7 +5,7 @@ String portName = "";
 boolean portSelected = false;
 boolean isPaused = false;
 
-// Realtime Logic Analyzer Graph Buffers
+// Realtime Logic Analyzer Waveform Graph Buffers
 int maxSamples = 600;
 int[] sclHistory = new int[maxSamples];
 int[] sdaHistory = new int[maxSamples];
@@ -14,7 +14,7 @@ int sampleIndex = 0;
 
 // Log Messages Console
 ArrayList<String> eventLog = new ArrayList<String>();
-int maxLogLines = 22;
+int maxLogLines = 20;
 
 // Processing-Side I2C State Machine Decoder
 int prevSCL = 1;
@@ -24,12 +24,9 @@ int currentByte = 0;
 int bitCount = 0;
 int frameByteIndex = 0;
 
-// Current Active Transaction Line Buffer
-String activeTransaction = "";
-
 void setup() {
   size(1000, 720);
-  surface.setTitle("I2C Passive Logic Analyzer & Sniffer - Processing GUI");
+  surface.setTitle("I2C Passive Logic Analyzer & Decoder - Processing GUI");
 
   for (int i = 0; i < maxSamples; i++) {
     sclHistory[i] = 1;
@@ -62,7 +59,7 @@ void drawPortSelectionScreen() {
   fill(255);
   textAlign(CENTER, CENTER);
   textSize(22);
-  text("I2C Passive Interrupt Sniffer - Select USB Serial Port", width / 2, 80);
+  text("I2C Passive Sniffer - Select USB Serial Port", width / 2, 80);
 
   textSize(14);
   text("Press keys 0-9 or click on a port below:", width / 2, 120);
@@ -105,7 +102,7 @@ void mousePressed() {
     }
   } else {
     // Check Pause Button click
-    if (mouseX > width - 150 && mouseX < width - 20 && mouseY > 12 && mouseY < 38) {
+    if (mouseX > width - 160 && mouseX < width - 20 && mouseY > 12 && mouseY < 38) {
       isPaused = !isPaused;
     }
   }
@@ -135,13 +132,13 @@ void readSerialData() {
       long ts0 = myPort.read() & 0xFF;
       long microTs = (ts3 << 24) | (ts2 << 16) | (ts1 << 8) | ts0;
 
-      // Always update live graph waveforms
+      // Update Realtime Waveform Graph History
       sclHistory[sampleIndex] = scl;
       sdaHistory[sampleIndex] = sda;
       timeHistory[sampleIndex] = microTs;
       sampleIndex = (sampleIndex + 1) % maxSamples;
 
-      // Run I2C Protocol State Machine Decoder
+      // Perform Protocol Decoding in Processing
       decodeI2C(scl, sda, microTs);
 
       prevSCL = scl;
@@ -151,13 +148,15 @@ void readSerialData() {
 }
 
 void decodeI2C(int scl, int sda, long ts) {
+  String timeStr = "[" + String.format("%08d", ts % 100000000L) + " us] ";
+
   // START Condition: SDA falls from 1 to 0 while SCL is HIGH
   if (prevSDA == 1 && sda == 0 && scl == 1 && prevSCL == 1) {
-    if (activeTransaction.length() > 0) {
-      addLog(activeTransaction + " [RESTART]");
+    if (!inFrame) {
+      addLog(timeStr + ">> [START CONDITION]");
+    } else {
+      addLog(timeStr + ">> [REPEATED START]");
     }
-    String timeStr = String.format("%08d", ts % 100000000L);
-    activeTransaction = "[" + timeStr + " us] [START] ";
     inFrame = true;
     currentByte = 0;
     bitCount = 0;
@@ -167,10 +166,8 @@ void decodeI2C(int scl, int sda, long ts) {
 
   // STOP Condition: SDA rises from 0 to 1 while SCL is HIGH
   if (prevSDA == 0 && sda == 1 && scl == 1 && prevSCL == 1) {
-    if (inFrame && activeTransaction.length() > 0) {
-      activeTransaction += " -> [STOP]";
-      addLog(activeTransaction);
-      activeTransaction = "";
+    if (inFrame) {
+      addLog(timeStr + "<< [STOP CONDITION]");
       inFrame = false;
     }
     return;
@@ -179,7 +176,6 @@ void decodeI2C(int scl, int sda, long ts) {
   // Sample Data Bits on SCL Rising Edge (0 to 1)
   if (prevSCL == 0 && scl == 1 && inFrame) {
     if (bitCount < 8) {
-      // Shift bit in MSB first
       currentByte = (currentByte << 1) | (sda & 0x01);
       bitCount++;
     } else if (bitCount == 8) {
@@ -190,9 +186,9 @@ void decodeI2C(int scl, int sda, long ts) {
       if (frameByteIndex == 1) {
         int addr = (currentByte >> 1) & 0x7F;
         boolean isRead = (currentByte & 0x01) != 0;
-        activeTransaction += "ADDR 0x" + hex(addr, 2) + " (" + (isRead ? "READ" : "WRITE") + ") " + (ack ? "ACK" : "NACK");
+        addLog(timeStr + "   ADDR : 0x" + hex(addr, 2) + " (" + (isRead ? "READ" : "WRITE") + ") -> " + (ack ? "ACK" : "NACK"));
       } else {
-        activeTransaction += " | DATA 0x" + hex(currentByte, 2) + " (" + (ack ? "ACK" : "NACK") + ")";
+        addLog(timeStr + "   DATA : 0x" + hex(currentByte, 2) + " -> " + (ack ? "ACK" : "NACK"));
       }
 
       currentByte = 0;
@@ -218,7 +214,7 @@ void drawHeader() {
   fill(0, 220, 255);
   textAlign(LEFT, CENTER);
   textSize(18);
-  text("I2C Passive Logic Analyzer & Sniffer", 20, 25);
+  text("I2C Passive Logic Analyzer & Decoder", 20, 25);
 
   // Pause / Freeze Button
   if (isPaused) {
@@ -250,25 +246,25 @@ void drawWaveformGraphs() {
   // SCL Waveform Panel
   stroke(50, 65, 80);
   fill(15, 20, 28);
-  rect(graphX, 70, graphW, 110, 6);
+  rect(graphX, 65, graphW, 100, 6);
 
   fill(255, 220, 0); // Yellow for SCL
   textAlign(RIGHT, CENTER);
-  textSize(14);
-  text("SCL (Pin 3)", graphX - 10, 125);
+  textSize(13);
+  text("SCL (Pin 3)", graphX - 10, 115);
 
-  drawSignalWaveform(sclHistory, graphX, 70, graphW, 110, color(255, 220, 0));
+  drawSignalWaveform(sclHistory, graphX, 65, graphW, 100, color(255, 220, 0));
 
   // SDA Waveform Panel
   stroke(50, 65, 80);
   fill(15, 20, 28);
-  rect(graphX, 200, graphW, 110, 6);
+  rect(graphX, 175, graphW, 100, 6);
 
   fill(0, 220, 255); // Cyan for SDA
   textAlign(RIGHT, CENTER);
-  text("SDA (Pin 2)", graphX - 10, 255);
+  text("SDA (Pin 2)", graphX - 10, 225);
 
-  drawSignalWaveform(sdaHistory, graphX, 200, graphW, 110, color(0, 220, 255));
+  drawSignalWaveform(sdaHistory, graphX, 175, graphW, 100, color(0, 220, 255));
 }
 
 void drawSignalWaveform(int[] history, float x, float y, float w, float h, color c) {
@@ -277,8 +273,8 @@ void drawSignalWaveform(int[] history, float x, float y, float w, float h, color
   noFill();
 
   float stepX = w / (float)(maxSamples - 1);
-  float yHigh = y + 25;
-  float yLow = y + h - 25;
+  float yHigh = y + 20;
+  float yLow = y + h - 20;
 
   beginShape();
   for (int i = 0; i < maxSamples; i++) {
@@ -301,7 +297,7 @@ void drawSignalWaveform(int[] history, float x, float y, float w, float h, color
 
 void drawDecodedEventLog() {
   float logX = 20;
-  float logY = 330;
+  float logY = 290;
   float logW = width - 40;
   float logH = height - logY - 20;
 
@@ -312,7 +308,7 @@ void drawDecodedEventLog() {
   fill(0, 200, 255);
   textAlign(LEFT, TOP);
   textSize(14);
-  text("Decoded I2C Frame Transactions (Hex Address & Data):", logX + 15, logY + 12);
+  text("Decoded I2C Bus Traffic (Processing Decoder, Microseconds, Hex Address & Data):", logX + 15, logY + 12);
 
   stroke(40, 50, 65);
   line(logX + 15, logY + 35, logX + logW - 15, logY + 35);
@@ -326,6 +322,7 @@ void drawDecodedEventLog() {
     if (logLine.contains("ADDR")) fill(255, 220, 0);       // Yellow
     else if (logLine.contains("DATA")) fill(0, 220, 255);   // Cyan
     else if (logLine.contains("START")) fill(0, 255, 120);  // Green
+    else if (logLine.contains("STOP")) fill(255, 100, 100);  // Red
     else fill(180, 200, 220);
 
     text(logLine, logX + 15, textY);
