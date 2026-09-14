@@ -4,6 +4,7 @@ Serial myPort;
 String portName = "";
 boolean portSelected = false;
 boolean isPaused = false;
+boolean showStartStop = true;
 
 // Realtime Logic Analyzer Waveform Graph Buffers
 int maxSamples = 600;
@@ -15,9 +16,17 @@ int sampleIndex = 0;
 ArrayList<String> eventLog = new ArrayList<String>();
 int maxLogLines = 22;
 
+// Processing-Side I2C State Machine Decoder
+int prevSCL = 1;
+int prevSDA = 1;
+boolean inFrame = false;
+int currentByte = 0;
+int bitCount = 0;
+int frameByteIndex = 0;
+
 void setup() {
   size(1000, 720);
-  surface.setTitle("I2C Hardware-Synchronized Logic Analyzer - Processing GUI");
+  surface.setTitle("I2C Promiscuous Logic Analyzer & Sniffer - Processing GUI");
 
   for (int i = 0; i < maxSamples; i++) {
     sclHistory[i] = 1;
@@ -49,7 +58,7 @@ void drawPortSelectionScreen() {
   fill(255);
   textAlign(CENTER, CENTER);
   textSize(22);
-  text("I2C Passive Hardware Sniffer - Select USB Serial Port", width / 2, 80);
+  text("I2C Passive Promiscuous Sniffer - Select USB Serial Port", width / 2, 80);
 
   textSize(14);
   text("Press keys 0-9 or click on a port below:", width / 2, 120);
@@ -76,6 +85,8 @@ void keyPressed() {
     }
   } else if (key == ' ') {
     isPaused = !isPaused; // Toggle Pause / Freeze
+  } else if (key == 'f' || key == 'F') {
+    showStartStop = !showStartStop; // Toggle START/STOP noise filter
   }
 }
 
@@ -102,7 +113,6 @@ void connectToPort(String p) {
   try {
     portName = p;
     myPort = new Serial(this, portName, 500000);
-    myPort.bufferUntil('\n');
     portSelected = true;
     addLog("[SYSTEM] Connected to " + portName + " at 500,000 baud.");
   } catch (Exception e) {
@@ -112,44 +122,82 @@ void connectToPort(String p) {
 
 void readSerialData() {
   while (myPort != null && myPort.available() > 0) {
-    String line = myPort.readStringUntil('\n');
-    if (line != null) {
-      line = trim(line);
-      processIncomingLine(line);
+    int stateByte = myPort.read();
+    if ((stateByte & 0x80) != 0) {
+      int scl = (stateByte >> 1) & 0x01;
+      int sda = stateByte & 0x01;
+
+      // Update Waveform Graph History
+      sclHistory[sampleIndex] = scl;
+      sdaHistory[sampleIndex] = sda;
+      sampleIndex = (sampleIndex + 1) % maxSamples;
+
+      // Perform Protocol Decoding in Processing
+      decodeI2C(scl, sda);
+
+      prevSCL = scl;
+      prevSDA = sda;
     }
   }
 }
 
-void processIncomingLine(String line) {
-  if (line.startsWith("E,")) {
-    // Format: E,TIMESTAMP,EVENT_TYPE,...
-    String[] parts = split(line, ',');
-    if (parts.length >= 3) {
-      float timeVal = float(parts[1]);
-      String type = parts[2];
-      String timeStr = "[" + nf(round(timeVal) % 100000000, 8) + " us] ";
+void decodeI2C(int scl, int sda) {
+  // START Condition: SDA falls from 1 to 0 while SCL is HIGH
+  if (prevSDA == 1 && sda == 0 && scl == 1 && prevSCL == 1) {
+    if (showStartStop) {
+      if (!inFrame) {
+        addLog(">> [START CONDITION]");
+      } else {
+        addLog(">> [REPEATED START]");
+      }
+    }
+    inFrame = true;
+    currentByte = 0;
+    bitCount = 0;
+    frameByteIndex = 0;
+    return;
+  }
 
-      if (type.equals("START")) {
-        addLog(timeStr + ">> [START CONDITION]");
-        pushWaveform(1, 0); // SCL 1, SDA 0
-      } else if (type.equals("STOP")) {
-        addLog(timeStr + "<< [STOP CONDITION]");
-        pushWaveform(1, 1); // SCL 1, SDA 1
-      } else if (type.equals("ADDR") && parts.length >= 5) {
-        addLog(timeStr + "   ADDR : " + parts[3] + " (" + parts[4] + ") -> " + parts[5]);
-        pushWaveform(1, (parts[5].equals("ACK") ? 0 : 1));
-      } else if (type.equals("DATA") && parts.length >= 4) {
-        addLog(timeStr + "   DATA : " + parts[3] + " -> " + parts[4]);
-        pushWaveform(1, (parts[4].equals("ACK") ? 0 : 1));
+  // STOP Condition: SDA rises from 0 to 1 while SCL is HIGH
+  if (prevSDA == 0 && sda == 1 && scl == 1 && prevSCL == 1) {
+    if (inFrame) {
+      if (showStartStop) {
+        addLog("<< [STOP CONDITION]");
+      }
+      inFrame = false;
+    }
+    return;
+  }
+
+  // Sample Data Bits on SCL Rising Edge (0 to 1)
+  if (prevSCL == 0 && scl == 1) {
+    if (!inFrame && bitCount == 0) {
+      inFrame = true;
+    }
+
+    if (inFrame) {
+      if (bitCount < 8) {
+        // Shift bit in MSB First
+        currentByte = (currentByte << 1) | (sda & 0x01);
+        bitCount++;
+      } else if (bitCount == 8) {
+        // 9th bit: ACK (0) or NACK (1)
+        boolean ack = (sda == 0);
+        frameByteIndex++;
+
+        if (frameByteIndex == 1) {
+          int addr = (currentByte >> 1) & 0x7F;
+          boolean isRead = (currentByte & 0x01) != 0;
+          addLog("   ADDR : 0x" + hex(addr, 2) + " (" + (isRead ? "READ" : "WRITE") + ") -> " + (ack ? "ACK" : "NACK"));
+        } else {
+          addLog("   DATA : 0x" + hex(currentByte, 2) + " -> " + (ack ? "ACK" : "NACK"));
+        }
+
+        currentByte = 0;
+        bitCount = 0;
       }
     }
   }
-}
-
-void pushWaveform(int scl, int sda) {
-  sclHistory[sampleIndex] = scl;
-  sdaHistory[sampleIndex] = sda;
-  sampleIndex = (sampleIndex + 1) % maxSamples;
 }
 
 void addLog(String msg) {
@@ -169,7 +217,7 @@ void drawHeader() {
   fill(0, 220, 255);
   textAlign(LEFT, CENTER);
   textSize(18);
-  text("I2C Hardware-Synchronized Logic Analyzer", 20, 25);
+  text("I2C Promiscuous Logic Analyzer & Sniffer", 20, 25);
 
   // Pause / Freeze Button
   if (isPaused) {
@@ -191,7 +239,7 @@ void drawHeader() {
   fill(180, 200, 220);
   textSize(12);
   textAlign(RIGHT, CENTER);
-  text("Port: " + portName, width - 180, 25);
+  text("Port: " + portName + " | Filter START/STOP: [F]", width - 180, 25);
 }
 
 void drawWaveformGraphs() {
@@ -263,7 +311,7 @@ void drawDecodedEventLog() {
   fill(0, 200, 255);
   textAlign(LEFT, TOP);
   textSize(14);
-  text("Hardware-Decoded I2C Bus Traffic (Microsecond Timestamps, Hex Address & Data):", logX + 15, logY + 12);
+  text("Promiscuous Decoded I2C Bus Traffic (All Hex Addresses & Data, Press 'F' to filter START/STOP):", logX + 15, logY + 12);
 
   stroke(40, 50, 65);
   line(logX + 15, logY + 35, logX + logW - 15, logY + 35);

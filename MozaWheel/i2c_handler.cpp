@@ -23,6 +23,7 @@ SlaveState getNextState(uint8_t received)
 void requestEvent()
 {
     static uint8_t response;
+    uint8_t idx = (btnSeqIdx >= 0 && btnSeqIdx < 5) ? static_cast<uint8_t>(btnSeqIdx) : 0;
 
     switch (currentState)
     {
@@ -33,12 +34,12 @@ void requestEvent()
             response = F9_PAYLOAD;
             break;
         case DD_RECEIVED:
-            response = btnPayloads[btnSeqIdx] + rotaryPayloads[btnSeqIdx];
-            if (rotaryPayloads[btnSeqIdx] != 0x00)
+            response = btnPayloads[idx] + rotaryPayloads[idx];
+            if (rotaryPayloads[idx] != 0x00)
                 EncoderHandler::resetPayload();
             break;
         case DE_RECEIVED:
-            response = paddlePayloads[btnSeqIdx];
+            response = paddlePayloads[idx];
             break;
         case NONE:
         default:
