@@ -125,9 +125,9 @@ void processIncomingLine(String line) {
     // Format: E,TIMESTAMP,EVENT_TYPE,...
     String[] parts = split(line, ',');
     if (parts.length >= 3) {
-      long ts = long(parts[1]);
+      float timeVal = float(parts[1]);
       String type = parts[2];
-      String timeStr = "[" + String.format("%08d", ts % 100000000L) + " us] ";
+      String timeStr = "[" + nf(round(timeVal) % 100000000, 8) + " us] ";
 
       if (type.equals("START")) {
         addLog(timeStr + ">> [START CONDITION]");
