@@ -55,7 +55,10 @@ void isrSdaChange() {
 
         uint8_t nextHead = (head + 1) % BUFFER_SIZE;
         if (nextHead != tail) {
-            eventBuffer[head] = {ts, EV_START, 0, 0};
+            eventBuffer[head].timestamp = ts;
+            eventBuffer[head].type = EV_START;
+            eventBuffer[head].val = 0;
+            eventBuffer[head].flags = 0;
             head = nextHead;
         }
     }
@@ -64,7 +67,10 @@ void isrSdaChange() {
         inTransfer = false;
         uint8_t nextHead = (head + 1) % BUFFER_SIZE;
         if (nextHead != tail) {
-            eventBuffer[head] = {ts, EV_STOP, 0, 0};
+            eventBuffer[head].timestamp = ts;
+            eventBuffer[head].type = EV_STOP;
+            eventBuffer[head].val = 0;
+            eventBuffer[head].flags = 0;
             head = nextHead;
         }
     }
@@ -92,11 +98,17 @@ void isrSclRising() {
                 uint8_t addr = (currByte >> 1) & 0x7F;
                 bool isRead = (currByte & 0x01) != 0;
                 uint8_t flags = (isRead ? 0x02 : 0x00) | (ack ? 0x01 : 0x00);
-                eventBuffer[head] = {ts, EV_ADDR, addr, flags};
+                eventBuffer[head].timestamp = ts;
+                eventBuffer[head].type = EV_ADDR;
+                eventBuffer[head].val = addr;
+                eventBuffer[head].flags = flags;
             } else {
                 // Data Byte
                 uint8_t flags = (ack ? 0x01 : 0x00);
-                eventBuffer[head] = {ts, EV_DATA, currByte, flags};
+                eventBuffer[head].timestamp = ts;
+                eventBuffer[head].type = EV_DATA;
+                eventBuffer[head].val = currByte;
+                eventBuffer[head].flags = flags;
             }
             head = nextHead;
         }
@@ -124,32 +136,35 @@ void setup() {
 void loop() {
     // Drain event ring buffer and stream formatted events over USB CDC Serial
     while (tail != head) {
-        I2CEvent ev = eventBuffer[tail];
+        uint32_t ts = eventBuffer[tail].timestamp;
+        uint8_t type = eventBuffer[tail].type;
+        uint8_t val = eventBuffer[tail].val;
+        uint8_t flags = eventBuffer[tail].flags;
         tail = (tail + 1) % BUFFER_SIZE;
 
         Serial.print("E,");
-        Serial.print(ev.timestamp);
+        Serial.print(ts);
         Serial.print(",");
 
-        if (ev.type == EV_START) {
+        if (type == EV_START) {
             Serial.println("START");
-        } else if (ev.type == EV_STOP) {
+        } else if (type == EV_STOP) {
             Serial.println("STOP");
-        } else if (ev.type == EV_ADDR) {
-            bool isRead = (ev.flags & 0x02) != 0;
-            bool isAck = (ev.flags & 0x01) != 0;
+        } else if (type == EV_ADDR) {
+            bool isRead = (flags & 0x02) != 0;
+            bool isAck = (flags & 0x01) != 0;
             Serial.print("ADDR,0x");
-            if (ev.val < 0x10) Serial.print("0");
-            Serial.print(ev.val, HEX);
+            if (val < 0x10) Serial.print("0");
+            Serial.print(val, HEX);
             Serial.print(",");
             Serial.print(isRead ? "R" : "W");
             Serial.print(",");
             Serial.println(isAck ? "ACK" : "NACK");
-        } else if (ev.type == EV_DATA) {
-            bool isAck = (ev.flags & 0x01) != 0;
+        } else if (type == EV_DATA) {
+            bool isAck = (flags & 0x01) != 0;
             Serial.print("DATA,0x");
-            if (ev.val < 0x10) Serial.print("0");
-            Serial.print(ev.val, HEX);
+            if (val < 0x10) Serial.print("0");
+            Serial.print(val, HEX);
             Serial.print(",");
             Serial.println(isAck ? "ACK" : "NACK");
         }
